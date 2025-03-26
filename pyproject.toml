@@ -1,0 +1,24 @@
+[project]
+name = "agentsphere"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13.2"
+dependencies = [
+    "bs4>=0.0.2",
+    "fastapi[standard]>=0.115.12",
+    "jose>=1.0.0",
+    "litellm>=1.63.14",
+    "markdownify>=1.1.0",
+    "ollama>=0.4.7",
+    "pydantic-settings>=2.8.1",
+    "pymilvus>=2.5.6",
+    "pymongo>=4.11.3",
+    "pytest>=8.3.5",
+    "python-dotenv>=1.1.0",
+    "requests>=2.32.3",
+    "selenium>=4.30.0",
+    "sse-starlette>=2.2.1",
+    "uvicorn>=0.34.0",
+    "websockets>=15.0.1",
+]

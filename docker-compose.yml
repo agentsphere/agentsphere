@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  fastapi_app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "9000:9000"
+    environment:
+      - PORT=9000
+    env_file:
+      - .env.dev
+    volumes:
+      - .:/app  # Mount the project directory for live reloading
+      - /app/__pycache__  # Prevent caching issues
