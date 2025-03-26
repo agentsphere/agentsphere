@@ -10,9 +10,13 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from pydantic import BaseModel, Field
-from config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
+
 import logging
 logger= logging.getLogger(__name__)
+
+SECRET_KEY = "hhasdisadc2As2189dD"  # Change this to a secure random key
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 1440000
 
 
 def introspect_token(token: str) -> dict:
@@ -113,14 +117,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     return payload  # This returns the user data from the token
 
-from fastapi import FastAPI, Depends, HTTPException, status
-from pydantic import BaseModel
-from datetime import timedelta
-
-from auth import create_access_token, hash_password, verify_password
 
 
-router = APIRouter()
 
 
 # Dummy user database
@@ -179,25 +177,5 @@ def get_uuid(token):
         return None
     return user.get("uuid", None) 
 
-class UserLogin(BaseModel):
-    username: str
-    password: str
-
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str
-
-@router.post("/token", response_model=TokenResponse)
-def login_for_access_token(user_data: UserLogin):
-    user = fake_users_db.get(user_data.username)
-    if not user or not verify_password(user_data.password, user["password"]):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-
-    access_token = create_access_token(data={"sub": user_data.username}, expires_delta=timedelta(minutes=30))
-    return {"access_token": access_token, "token_type": "bearer"}
 
 
-@router.get("/users/me")
-def read_users_me(current_user: dict = Depends(get_current_user)):
-    print(current_user)
-    return {"username": current_user["sub"]}

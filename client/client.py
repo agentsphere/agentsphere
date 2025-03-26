@@ -6,11 +6,14 @@ import shlex
 import stat
 import websockets
 import select
-
+from dotenv import load_dotenv
+load_dotenv(dotenv_path='./client/.env')
 
 TOKEN = os.getenv("TOKEN")
-WSS_SERVER = os.getenv("WSS_SERVER")
+WSS_SERVER = os.getenv("WSS_URL")
 
+print(TOKEN)
+print(WSS_SERVER)
 
 
 def clean_terminal_output(raw: str) -> str:
@@ -179,7 +182,7 @@ def strip_surrounding_quotes(cmd: str) -> str:
 
 async def receive_file():
 
-    uri = f"ws://{WSS_SERVER}127.0.0.1:8000/ws?token={TOKEN}"
+    uri = f"{WSS_SERVER}?token={TOKEN}"
     
     while True:
         try:

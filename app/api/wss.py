@@ -9,14 +9,10 @@ from app.services.wss import add_connection
 from app.models.models import *
 from app.config import logger
 
-router = APIRouter(prefix="/api/v1/wss")
-# A structure to store user -> websocket mapping
-connected_receivers: Dict[str, WebSocket] = {}
+router = APIRouter()
 
-test_token = "mytoken"
-
-
-@router.websocket("/")
+@router.websocket("/api/v1/wss")
 async def receiver_handler(websocket: WebSocket, token: str = Query(...)):
     """Handles WebSocket connections from Receivers."""
-    return add_connection(websocket, token)
+    logger.debug(f"Receiver connected with token {token}")
+    return await add_connection(websocket, token)

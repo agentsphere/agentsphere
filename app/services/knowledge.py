@@ -10,7 +10,8 @@ from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-from llm import getQueriesForDocument
+from duckduckgo_search import DDGS
+
 
 driver = webdriver.Chrome()
 import mongomock
@@ -48,14 +49,16 @@ import requests
 from bs4 import BeautifulSoup
 
 
-def perform_web_search(query):
-    # Replace with your web search API call
-    search_url = f"https://api.bing.microsoft.com/v7.0/search?q={query}"
-    headers = {"Ocp-Apim-Subscription-Key": "Your_Bing_Search_API_Key"}
-    response = requests.get(search_url, headers=headers)
-    response.raise_for_status()
-    search_results = response.json()
-    return [entry['url'] for entry in search_results.get('webPages', {}).get('value', [])]
+def perform_web_search(query, max_results=5):
+    """Perform a web search using DuckDuckGo and return a list of URLs."""
+    logger.info(f"Performing web search for: {query}")
+    urls = []
+    with DDGS() as ddgs:
+        for result in ddgs.text(query, max_results=max_results):
+            urls.append(result["href"])  # Extract the URL from the result
+    
+    logger.info(f"urls: {urls}")
+    return list(set(urls))
 
 def getPageWithSelenium(url):
     driver.get(url)
@@ -199,6 +202,7 @@ def load_from_url(url):
 
     docs = getDocsFromHTML(getPageWithSelenium(url))
     
+    from app.services.llm import getQueriesForDocument
     for doc in docs:
         queries = getQueriesForDocument(doc)
 
@@ -209,10 +213,11 @@ def load_from_url(url):
         for q in queries.queries:
             addQuery({"query": str(q), "doc_id": str(id)})
 
-    return "fin"
+    return docs
 
 
 def getKnowledge(query):
+    logger.info(f"Searching for: {query}")
 
     resultsList = vector.search(
             collection_name="knowledge",
@@ -230,20 +235,26 @@ I have following information available:
     for results in resultsList:
         for result in results:
             logger.debug(f"Search result: {result}")
-            if result.get("distance") > 0.7:
+            if result.get("distance") > 0.75:
 
                 idsToGet.append(result.get("entity").get("doc_id"))
     idsUnique = list(set(idsToGet))
     logger.info(f" id  {idsUnique}")
-    res = collection.find({"_id": {"$in": idsUnique}})
-    for re in res:
-        logger.info(re.get("doc"))
-        knowledge += re.get("doc")
-
+    if idsUnique:
+        res = collection.find({"_id": {"$in": idsUnique}})
+        for re in res:
+            logger.info(re.get("doc"))
+            knowledge += re.get("doc")
+    else:
+        urls = perform_web_search(query)
+        for url in urls:
+            knowledge += load_from_url(url)
+        
     #logger.info(res)
     #logger.info(doc)
     #knowledge += doc.get("doc")
    
     logger.info(knowledge)
+    return knowledge
 
 

@@ -7,6 +7,7 @@ from typing import Any, Dict
 from app.services.auth import check_executioner, check_executioner_uuid_for_user, get_current_user, get_uuid, validate_token
 from app.models.models import *
 from app.config import logger
+from app.services.auth import fake_executioner_clientId
 
 # A structure to store user -> websocket mapping
 connected_receivers: Dict[str, WebSocket] = {}
@@ -44,6 +45,8 @@ async def send_execution_file(requestRaw: ExecutionRequest):
     """
     try:
         logger.info(f"Start sendandexecute request: {requestRaw}")
+        if requestRaw.uuid is None:
+            requestRaw.uuid = fake_executioner_clientId[requestRaw.user.id][0]
         check_executioner_uuid_for_user(user=requestRaw.user.id, uuid=requestRaw.uuid)
 
         # Validate receiver
@@ -88,7 +91,7 @@ async def send_execution_file(requestRaw: ExecutionRequest):
         try:
             response = await ws.receive_text()
             logger.info(f"Client response: {response}")
-            return JSONResponse(status_code=200, content={"status": "checkoutput", "response": response})
+            return response
         except Exception as recv_error:
             logger.error(f"Error receiving response from client: {recv_error}")
             return JSONResponse(status_code=500, content={"error": "No acknowledgment from client"})

@@ -1,18 +1,20 @@
+import os
 from typing import Any
 from pymilvus import MilvusClient
 import ollama
 import logging
 
 logger=logging.getLogger(__name__)
-from auth import get_current_user, get_user, validate_token
+from app.services.auth import get_current_user, get_user, validate_token
 from app.models.models import *
+from app.config import settings
 
 
 def emb_text(text):
     response = ollama.embeddings(model="mxbai-embed-large", prompt=text)
     return response["embedding"]
 
-client = MilvusClient("milvus_demo.db")
+client = MilvusClient(settings.MILVUSDBFILE)
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel

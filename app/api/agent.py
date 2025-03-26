@@ -11,6 +11,7 @@ from pydantic import BaseModel
 import logging
 
 
+from app import config
 from app.services.queue import add_queue_for_chat, add_to_queue, remove_queue_for_chat
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def introspect_token(token: str) -> dict:
     ctoken = token.split(" ", 1)[1] if token.startswith("Bearer ") else token
     introspection_url = "https://auth.agentsphere.cloud/realms/agentsphere/protocol/openid-connect/token/introspect"
 
-    client_id = "agentserver"
+    client_id = os.getenv("CLIENT")
     client_secret = os.getenv("CLIENT_SECRET")
 
     logger.debug(f"id {client_id} sec {client_secret}")
@@ -99,7 +100,6 @@ def validate_token(token_header: dict = Depends(get_user_headers)):
 
 logger=logging.getLogger(__name__)
 
-app = FastAPI()
 class Message(BaseModel):
     role: str
     content: str
@@ -109,12 +109,12 @@ class ChatRequest(BaseModel):
     messages: List[Message]
     stream: Optional[bool] = False
 
-@app.middleware("http")
-async def log_request_headers(request: Request, call_next):
-    headers = {k: v for k, v in request.headers.items()}
-    logger.info(f"Incoming {request.method} request to {request.url.path} with headers: {headers}")
-    response = await call_next(request)
-    return response
+#@app.middleware("http")
+#async def log_request_headers(request: Request, call_next):
+#    headers = {k: v for k, v in request.headers.items()}
+#    logger.info(f"Incoming {request.method} request to {request.url.path} with headers: {headers}")
+#    response = await call_next(request)
+#    return response
 
 class ModelDetails(BaseModel):
     format: str
@@ -131,9 +131,10 @@ class Model(BaseModel):
     digest: str
     details: ModelDetails
 
+router = APIRouter()
 
 
-@app.get("/api/tags", response_model=Dict[str, List[Model]])
+@router.get("/api/tags", response_model=Dict[str, List[Model]])
 def list_models(token: str = Depends(validate_token)):
     return {
         "models": [
@@ -154,7 +155,7 @@ def list_models(token: str = Depends(validate_token)):
         ]
     }
 
-@app.get("/api/version")
+@router.get("/api/version")
 def get_version(token: str = Depends(validate_token)):
     return {"version": "0.5.7"}
 
@@ -163,7 +164,7 @@ tz_offset = -8  # Offset in hours
 tzinfo = timezone(timedelta(hours=tz_offset))
 
 def getResponseObject(message: str, finish: bool = False):
-    return {
+    return  json.dumps({
         "model": "superman",
         "created_at": f"{datetime.now(tzinfo)}",
         "message": {
@@ -177,12 +178,12 @@ def getResponseObject(message: str, finish: bool = False):
         "prompt_eval_duration": 2,
         "eval_count": 2,
         "eval_duration": 2
-    }
+    })
 
 class CallbackData(BaseModel):
     data: str
 
-@app.post("/callback/{chat_id}")
+@router.post("/callback/{chat_id}")
 async def subagent_callback(chat_id: str, data: CallbackData):
     add_to_queue(chat_id, data.data)
     return {"status": "ok"}
@@ -217,7 +218,7 @@ def stream_response(content, finish=False):
 
 
 
-@app.post("/api/chat")
+@router.post("/api/chat")
 async def handle_models(request: ChatRequest,user: str = Depends(get_user)):
     """
     Handles chat requests and streams responses to OpenWebUI.
@@ -247,7 +248,7 @@ async def handle_models(request: ChatRequest,user: str = Depends(get_user)):
                     msg = await queue.get()
                     if msg == "[DONE]":
                         logger.info(f"Streaming completed for chat_id: {chat_id}")
-                        yield getResponseObject("", finish=True) + "\n"
+                        yield getResponseObject("", finish=True)+ "\n"
                         break
                     yield stream_response(msg) + "\n"
 

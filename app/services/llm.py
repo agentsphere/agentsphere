@@ -10,6 +10,9 @@ import time  # Add this import at the top of the file
 
 import logging
 
+from app.services.knowledge import getKnowledge
+from app.models.models import ExecutionRequest
+from app.models.models import Tool
 from app.models.models import User
 from app.services.queue import add_to_queue
 from app.services.wss import send_execution_file
@@ -90,7 +93,7 @@ async def execute_tool(user, toolname: str, params: Dict[str, Any]):
     """
     Calls the tool execution API with the given parameters.
     """
-    return send_execution_file(ExecutionRequest(user=User(id=user.id, username=user.username), toolname="bash sh", params=params))
+    return await send_execution_file(ExecutionRequest(user=User(id=user.id, username=user.username), toolname="sh", params=params, tool=Tool(type="command")))
 
     
 
@@ -108,6 +111,7 @@ async def answerRequest(user, chat_id: str,request: str):
                 Message(role=Roles.USER.value, content=f'''Answer Request to the best of your knowledge
                         {request}
 
+                        use getKnowledge(query) within the tool_calls to gather information via websearch, its like a google search which aggregates information.
                         you can use shell(command) to execute bash/shell commands to gather the needed information, use cli tools, call APIs
                         Follow the syntax to call shell(command) strictly: example: shell(ls -l), shell(gcloud init), shell(echo "content" >> file)
                         if you gather the needed information set done=true and provide a message to the user.
@@ -128,13 +132,16 @@ async def answerRequest(user, chat_id: str,request: str):
         logger.info(f"parsedResp {parsedResp}") # expecting tool call here
         if parsedResp.tool_calls:
             for tool_call in parsedResp.tool_calls:
+                
 
                 tool, params = tool_call.split("(", 1)
                 params = params[:-1]
-                await asyncio.create_task(add_to_queue(chat_id, f"Superman: Toolcall {params} \n\n"))
-                
-                res = await execute_tool(user, tool, params={"command":params})
-                # Log the message content before appending it to the messages list
+                await asyncio.create_task(add_to_queue(chat_id, f"Superman: Toolcall {tool} with {params} \n\n"))
+                if(tool == "getKnowledge"):
+                    res = getKnowledge(params)
+                else:
+                    res = await execute_tool(user, tool, params={"command":params})
+                    # Log the message content before appending it to the messages list
                 message_content = f"Following tool execution has been executed with: Tool {tool} executed with command {params} response {res}"
                 logger.info(f"Appending message to messages list: {message_content}")
 
@@ -176,8 +183,8 @@ class Task(BaseModel):
 
     rollback: str = Field(description="Instructions to revert the task if needed.")
     description: str = Field(description="A detailed explanation of what the task entails.")
+    queries: list[str] = Field(description="A list of queries to gather information to solve the task.")
     test: str = Field(description="A test or validation method to ensure the task is completed correctly.")
-    tool_queries: list[str] = Field(description="A list of tool quereies which might be needed to solve the task. prefer command lines or API calls over UI/Browser tools. Like ['clone git repo', 'list files', 'list directories', 'git commit']")
     context: str = Field(description="Context Information like repo urls, documentation, company programming guidelines")
 
 class Tasks(BaseModel):
@@ -197,25 +204,18 @@ class ToolSuggestionRequest(BaseModel):
 
 
 
-class ExecutionRequest(BaseModel):
-    """Represents a request to execute a tool with specific parameters."""
-    user: Optional[User] = None
-    toolname: Optional[str] = None
-    params: Optional[Dict[str, Any]] = None
-
-
 async def solveSubTask(user, agent:Agent, chat_id:str, task: Task):
    #load_tools
     logger.info(f"task {task}")
 
     await asyncio.create_task(add_to_queue(chat_id, f"{agent.role}: Solving subtask {task.description} \n\n"))
-    with httpx.Client() as client:
+    """with httpx.Client() as client:
         data = ToolSuggestionRequest(queries=task.tool_queries)
         url = 'http://127.0.0.1:8000/tools/suggestions'  # Example URL that echoes the posted data
         logger.info(f"Sending execution request: {data.model_dump_json()}")
 
         responseTools = client.post(url, data=data.model_dump_json(),headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"})  # ✅ Correct async call)  # ✅ Correct async call
-    logger.info(f"responseTools {responseTools}")
+    logger.info(f"responseTools {responseTools}")"""
 
     messages=[
                 Message(role=Roles.SYSTEM.value, content=f"You are: {agent.model_dump()}").model_dump(),
@@ -310,7 +310,7 @@ async def solveMediumRequest(user, chat_id: str, request: str):
 
     # Gather information
 
-    
+    """
     requestImproved = await litellm.acompletion(
         model=model,
         messages=[
@@ -323,18 +323,20 @@ async def solveMediumRequest(user, chat_id: str, request: str):
             ''').model_dump()
         ],
     )
-    requestImprovedTxt= requestImproved.choices[0].message.content
-    await asyncio.create_task(add_to_queue(chat_id, f"{c.role}: I have refined your original request for further processing: '{requestImprovedTxt}' ... \n\n"))
+
+    requestImprovedTxt= requestImproved.choices[0].message.content"""
+    requestImprovedTxt = request
+    #await asyncio.create_task(add_to_queue(chat_id, f"{c.role}: I have refined your original request for further processing: '{requestImprovedTxt}' ... \n\n"))
 
 
-    await asyncio.create_task(add_to_queue(chat_id, f"{c.role}: Breaking down your request into executable subtasks ... \n\n"))
+    await asyncio.create_task(add_to_queue(chat_id, f"{c.role}: Breaking down your request into subtasks and research steps ... \n\n"))
    
     response = await litellm.acompletion(
         model=model,
         response_format=Tasks,
         messages=[
             Message(role=Roles.SYSTEM.value, content=f"You are: {c.model_dump()}").model_dump(),
-            Message(role=Roles.USER.value, content=f'''Based on who you are, your background skills and tools. Analyse the request and break it down into multiple executable tasks, including tasks to test if the request is fullfilled, including steps to rollback to be able to revert if something goes wrong. Always consider Best practices for the considered tool and workflow you use. Request:
+            Message(role=Roles.USER.value, content=f'''Based on who you are, your background skills and tools. Analyse the request and break it down into multiple subtasks and research steps including steps to gather information with google search queries, tasks to test if the request is fullfilled, including steps to rollback to be able to revert if something goes wrong (test and rollback are not needed for research steps). Always consider Best practices for the considered tool and workflow you use. Request:
                     {requestImprovedTxt}
             ''').model_dump()
         ],
@@ -351,7 +353,7 @@ async def solveMediumRequest(user, chat_id: str, request: str):
                     
                     currentTasks: {currentTasks}
                     
-                    Based on who you are, your background skills and tools. Analyse the currentTasks if they are executcable steps to solve the given original Request. Improve the given tasks. If the rollback is not needed leave it blank, make the tool queries concise and favour bash, sh, cli calls and mentiond the bash, sh, cli within the tool queries whenever used. Always consider Best practices for the considered tool and workflow you use (i.e. if your all dealing with code use git repo, never push to main use PRs and so on). Request:
+                    Based on who you are, your background skills and tools. Analyse the currentTasks if they are executcable steps to solve the given original Request. Improve the given tasks and steps. If the rollback is not needed, for example for research only steps leave it blank. And sh statements to the task if you might want to execute a cli command on the users behalf. Always consider Best practices for the considered tool and workflow you use (i.e. if your all dealing with code use git repo, never push to main use PRs and so on). Request:
                     {request}
             ''').model_dump()
         ],

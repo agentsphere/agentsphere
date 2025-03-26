@@ -1,22 +1,24 @@
-import subprocess
+from multiprocessing import Process
+import os
 import time
 import requests
+import uvicorn
+
+def run_server():
+    os.environ["MILVUSDBFILE"] = "t1.db"
+    from app.main import app
+
+    uvicorn.run(app, host="127.0.0.1", port=8000)
 
 def test_server_startup():
-    # Start the server in a subprocess
-    process = subprocess.Popen(
-        ["uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    time.sleep(2)  # Give the server time to start
+    server_process = Process(target=run_server, daemon=True)
+    server_process.start()
+    time.sleep(5)  # Allow time for the server to start
 
     try:
-        # Check if the server is running
         response = requests.get("http://127.0.0.1:8000/")
         assert response.status_code == 200
         assert response.json() == {"message": "Welcome to the FastAPI project!"}
     finally:
-        # Terminate the server process
-        process.terminate()
-        process.wait()
+        server_process.terminate()
+        server_process.join()
