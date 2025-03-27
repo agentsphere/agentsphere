@@ -7,7 +7,7 @@ from typing import Any
 from bson import ObjectId
 from pymilvus import MilvusClient
 import ollama
-from app.models.models import Chat
+from app.models.models import Chat, Message, Roles
 from app.services.queue import add_to_queue
 from markdownify import markdownify as md
 from selenium import webdriver
@@ -343,7 +343,7 @@ def searchVector(query):
     unique_ids = sorted(unique_ids, key=lambda x: x["distance"], reverse=True)
 
     # Get the top 2 results
-    top_ids = [entry["doc_id"] for entry in unique_ids[:2]]
+    top_ids = [entry["doc_id"] for entry in unique_ids[:1]]
     max_distance = unique_ids[0]["distance"] if unique_ids else 0
 
     logger.info(f"Top 2 IDs: {top_ids} with max distance: {max_distance}")
@@ -383,7 +383,25 @@ async def getKnowledge(query: str, chat: Chat):
             logger.warning("No information found, might be something wrong with query llm or url loading")
             knowledge += "No information found, try again with a different search query."
     knowledge += "\n\n&&& END DOCUMENTATION &&&"
+
+    from app.services.litellm_wrapper import litellm_call
+
+    aggregate = await litellm_call(
+        oneShot=True,
+        chat=chat,
+        messages=[
+            Message(role=Roles.SYSTEM.value, content=f"You are a research specialist").model_dump(),
+            Message(role=Roles.USER.value, content=f'''Given the following Documentation: 
+                
+                    {knowledge}
+                    
+                    ________________________________________
+
+                    Dont make stuff up. Summarize the documentation and provide a final answer to the user for query:
+                    {query}
+            ''').model_dump()
+        ])
    
-    return knowledge
+    return aggregate
 
 

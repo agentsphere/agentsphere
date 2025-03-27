@@ -122,7 +122,6 @@ class Agent(BaseModel):
     role: str = Field(description="The primary role or job function of the agent.")
     background: str = Field(description="A brief background of the agent, including experience and expertise.")
     skills: str = Field(description="A list of key skills that the agent possesses.")
-    tools: str = Field(description="A list of tools or technologies that the agent is proficient in.")
 
 
 class Task(BaseModel):
