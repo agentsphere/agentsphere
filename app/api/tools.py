@@ -84,7 +84,7 @@ async def execute_tool(request: ExecutionRequest, token: Any = Depends(validate_
 async def get_executioner_token(request: User,token = Depends(validate_token)):
     logger.info("Get Token for new Executioner")
 
-    return TokenResponse(token=add_executioner(user_id=request.id, uuid= str(uuid.uuid4())))
+    return TokenResponse(token=add_executioner(user_id=request.id, uuid=request.id))
 
 @router.get("/client")
 async def download_file(token = Depends(validate_token)):

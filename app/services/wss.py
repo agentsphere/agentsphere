@@ -4,6 +4,7 @@ from fastapi import Depends, Query, WebSocket, WebSocketDisconnect, APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Any, Dict
+from app.models.models import Chat
 from app.services.auth import check_executioner, check_executioner_uuid_for_user, get_current_user, get_uuid, validate_token
 from app.models.models import *
 from app.config import logger
@@ -38,6 +39,34 @@ async def add_connection(websocket: WebSocket, token: str = Query(...)):
         if test_token in connected_receivers:
             del connected_receivers[test_token]
 
+
+async def executeShell(chat: Chat, command: str):
+    """Executes a shell command and returns the output."""
+    try:
+        logger.info(f"Executing shell command: {command}")
+        ws = connected_receivers.get(chat.user.id)
+        if ws is None or not isinstance(ws, WebSocket):
+            logger.warning(f"No valid WebSocket found for uuid {chat.user.uuid}")
+            return JSONResponse(status_code=404, content={"error": "No receiver found for the provided token"})
+
+        await ws.send_text("COMMAND")
+        cmd = command
+        if cmd:
+            logger.info(f"sending command {cmd}")
+            await ws.send_text(f"{cmd}")
+        else:
+            logger.info("no command found")
+    
+        try:
+            response = await ws.receive_text()
+            logger.info(f"Client response: {response}")
+            return response
+        except Exception as recv_error:
+            logger.error(f"Error receiving response from client: {recv_error}")
+            return JSONResponse(status_code=500, content={"error": "No acknowledgment from client"})
+    except Exception as e:
+        logger.error(f"Error executing shell command: {e}")
+        return f"Error executing command: {e}"
 
 async def send_execution_file(requestRaw: ExecutionRequest):
     """

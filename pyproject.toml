@@ -21,6 +21,7 @@ dependencies = [
     "python-jose[cryptography]>=3.4.0",
     "requests>=2.32.3",
     "selenium>=4.30.0",
+    "selenium-stealth>=1.0.6",
     "sse-starlette>=2.2.1",
     "uvicorn>=0.34.0",
     "websockets>=15.0.1",
