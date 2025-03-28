@@ -48,7 +48,10 @@ async def litellm_call(
                 return response_format.model_validate(json.loads(content))
             except ValidationError as e:
                 logger.error(f"Error parsing LLM response: {e}")
-                raise ValueError(f"Invalid response format: {content}")
+                messages.append(
+                        Message(role=Roles.ASSISTANT, content=f"Try again: Your output format is not correct. Got validation error in output {str(e)}").model_dump()
+                    )
+                return litellm_call(messages=messages, chat=chat, request=request, oneShot=oneShot, model=model, response_format=response_format)
             except Exception as e:
                 logger.error(f"Other error parsing LLM response: {e}")
                 raise ValueError(f"Invalid response format: {content}")
@@ -87,7 +90,7 @@ async def litellm_call(
                     try:
                         if tool == "getKnowledge":
                             await chat.set_message(f"🔧 Superman: `{tool}`: {params.get("query", None)}  \n\n")
-                            res = await getKnowledge(chat=chat, query=params.get("query", None))
+                            res = '\n\n'.join(await getKnowledge(chat=chat, query=params.get("query", None)))
                         elif tool == "shell":
                             res = await executeShell(chat, params.get("command", ""))
                         #else:
@@ -105,13 +108,14 @@ async def litellm_call(
                         Message(role=Roles.ASSISTANT, content=message_content).model_dump()
                     )
                     messages.append(
-                        Message(role=Roles.USER, content=f"Given the provided Information by the assistant please give a final answer and set done to True. Request {request}").model_dump()
+                        Message(role=Roles.USER, content=f"Given the provided Information by the assistant please give a final answer with message and work_result and set done to True. Request {request}").model_dump()
                     )
 
 
                 # Check if the task is done
                 if parsed_resp.done:
-                    await chat.set_message(f"Final Message: {parsed_resp.message} \n\n")
+                    await chat.set_message(f"{parsed_resp.message} \n\n")
+                    await chat.set_message(f"{parsed_resp.work_result} \n\n")
                     return parsed_resp
             except Exception as e:
                 logger.error(f"Error parsing LLM response: {e}")

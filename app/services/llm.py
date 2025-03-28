@@ -23,7 +23,7 @@ import textwrap
 TOKEN= os.getenv("TOKEN")
 TOOL_EXECUTION_URL=os.getenv("TOOL_EXECUTION_URL")
 
-MODEL="ollama_chat/qwen2.5-coder:32b"
+MODEL=settings.LLM_MODEL
 #MODEL="gpt-4o-mini"
 class DifficultyLevel(str, Enum):
     """Enum representing different levels of difficulty."""
@@ -87,7 +87,7 @@ async def answerRequest(chat: Chat,request: str):
     logger.info(f"Answer Request {request}")
     await chat.set_message("Gathering information ... \n\n")
 
-    return await litellm_call(
+    res = await litellm_call(
         response_format=ResponseToolCall,
         chat=chat,
         request=request,
@@ -128,11 +128,12 @@ class Task(BaseModel):
     """
     Represents a single task with rollback instructions, a description, and a test.
     """
+    unique_id: str = Field(description="A unique jira style id for the task.")
     unique_name: str = Field(description="A unique name for the task.")
     description: str = Field(description="A detailed explanation of what the task entails.")
-    test: str = Field(description="A test or validation method to ensure the task is completed correctly.")
+    #test: str = Field(description="A test or validation method to ensure the task is completed correctly.")
     context: str = Field(description="Context Information like repo urls, documentation, company programming guidelines")
-    dependsOn: Optional[list[str]] = Field(description="A list of tasks refernced by name that this task depends on.")
+    dependsOn: Optional[list[str]] = Field(description="A list of tasks refernced by task unique_id that this task depends on.")
 
 class Tasks(BaseModel):
     """
@@ -149,17 +150,26 @@ async def solveSubTask(agent:Agent, chat: Chat, task: Task):
     await chat.set_message(f"{agent.role}: Solving subtask {task.description} \n\n")
 
     messages=[
-                Message(role=Roles.SYSTEM.value, content=f"You are: {agent.model_dump()}").model_dump(),
-                Message(role=Roles.USER.value, content=f'''Shell is available 
+                Message(role=Roles.SYSTEM.value, content=f"You are {agent.role} with background {agent.background} and skill {agent.skills}" ).model_dump(),
+                Message(role=Roles.USER.value, content=f'''
+                        You are working on: {task.unique_id} {task.unique_name}
+                        _______________________________________________________
+                        Tools:
+                        Shell is available via the tool_calls_str.
                         shell(command=git clone) # execute bash/shell commands to create edit files, use cli tools, call APIs
                         whenever you want use the shell use "shell(command=cd clonedDir)" in the tool calls. you can execute multiple shell commands. Just use multiple entries in the tool_calls list.
                         
                         use getKnowledge(query=what is/how to ...) within the tool_calls to gather information via websearch, its like a google search which aggregates information.
                         As long as the task is not done you can continue to execute tools. If you are done set done=true and provide a message to the user.
+                        
+                        _______________________________________________________
+                        
                         Based on who you are, your background skills and tools, solve the current task:
                         {task.description}
 
-                        if you are done provide a message with detailed information to the user and for further task execution in the message field
+                        if finsished set done=true, provide your work result to solve the task (might be code, documentation, summary, conecpt, etc.) in the work_result field.
+
+                        if you are done provide short a status message with concise information to the user what has been done and that the work result has been added to the work_result_db.
                 ''').model_dump()
             ]
     if task.dependsOn:
@@ -170,18 +180,17 @@ async def solveSubTask(agent:Agent, chat: Chat, task: Task):
             else:
                 logger.info(f"dep {dep} not yet solved")
                 messages.append(Message(role=Roles.ASSISTANT.value,content= f"Task {dep} not yet solved, you can still try to solve yours").model_dump())
-    while True:
 
-        res =  await litellm_call(
-            response_format = ResponseToolCall,
-            chat = chat,
-            request=task.description,
-            messages = messages,
-        )
-        if chat.id not in taskResults:
-            taskResults[chat.id] = {}
-        taskResults[chat.id][task.unique_name] = res.message
-        return res
+    res =  await litellm_call(
+        response_format = ResponseToolCall,
+        chat = chat,
+        request=task.description,
+        messages = messages,
+    )
+    if chat.id not in taskResults:
+        taskResults[chat.id] = {}
+    taskResults[chat.id][task.unique_id] = res.work_result
+    return res
 
  
 
@@ -206,19 +215,20 @@ async def solveMediumRequest(chat: Chat, request: str):
 
     await chat.set_message(f"Starting Agent with role {agent.role} with background '{agent.background}' ... \n\n")
   
-    await chat.set_message(f"{agent.role}: Breaking down your request into subtasks and research steps ... \n\n")
+    #await chat.set_message(f"{agent.role}: Breaking down your request into subtasks and research steps ... \n\n")
  
-    tasks = await litellm_call(
-        chat=chat,
-        oneShot=True,
-        response_format=Tasks,
-        messages=[
-            Message(role=Roles.SYSTEM.value, content=f"You are: {agent.model_dump()}").model_dump(),
-            Message(role=Roles.USER.value, content=f'''Based on who you are, your background skills and tools. Analyse the request and break it down into multiple subtasks and research steps including steps to gather information with google search queries, tasks to test if the request is fullfilled, including steps to rollback to be able to revert if something goes wrong (test and rollback are not needed for research steps). Always consider Best practices for the considered tool and workflow you use. Request:
-                    {request}
-            ''').model_dump()
-        ],
-    )
+    #tasks = await litellm_call(
+    #    chat=chat,
+    #    oneShot=True,
+    #    response_format=Tasks,
+    #    messages=[
+    #        Message(role=Roles.SYSTEM.value, content=f"You are: {agent.model_dump()}").model_dump(),
+    #        Message(role=Roles.USER.value, content=f'''Based on who you are, your background skills and tools. Analyse the request and break it #down into multiple subtasks and research steps including steps to gather information with google search queries. Just include steps which #are necessary to solve the request, gather the needed information. Not more. No extra steps, no "nice-to-have". Always consider Best #practices for the considered tool and workflow you use. Request:
+    #                {request}
+    #        ''').model_dump()
+    #    ],
+    #)
+    tasks= Tasks(tasks=[Task(unique_id="DE-1",unique_name="Task",description=request,context="",dependsOn=[])])
 
     #tasksReviewed = await litellm_call(
     #    chat=chat,
@@ -236,9 +246,9 @@ async def solveMediumRequest(chat: Chat, request: str):
     #    ],
     #)
 
-    taskString = "\n\n".join([f"* {task.description}" for task in tasks.tasks]) + "\n\n ... "
+    #taskString = "\n\n".join([f"* {task.description}" for task in tasks.tasks]) + "\n\n ... "
 
-    await chat.set_message(f"{agent.role}: Tasks: \n\n {taskString}")
+    #await chat.set_message(f"{agent.role}: Tasks: \n\n {taskString}")
 
     # Creating jira Subtasks, toDO
 
@@ -252,7 +262,7 @@ class Queries(BaseModel):
 
 
 def getQueriesForDocument(doc, query):  
-    logger.info(f"doc {doc} query {query}")
+    logger.info(f"getQueriesForDocument {doc[:100]} {query}")
     response = litellm.completion(
         model=MODEL,
         response_format=Queries,

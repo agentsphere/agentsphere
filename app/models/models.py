@@ -91,6 +91,7 @@ class ResponseToolCall(BaseModel):
 
     done: bool = Field(..., description="True if the task is done, False otherwise.")
     message: str = Field(..., description="Message to the user.")
+    work_result: str = Field(..., description="Work result of the task.")
 
     # Mark queue as a private attribute that's not part of the model schema
     tool_calls: List[ToolCall] = Field(default_factory=list, exclude=True)

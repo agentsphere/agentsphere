@@ -86,13 +86,6 @@ class ChatRequest(BaseModel):
     messages: List[Message]
     stream: Optional[bool] = False
 
-#@app.middleware("http")
-#async def log_request_headers(request: Request, call_next):
-#    headers = {k: v for k, v in request.headers.items()}
-#    logger.info(f"Incoming {request.method} request to {request.url.path} with headers: {headers}")
-#    response = await call_next(request)
-#    return response
-
 class ModelDetails(BaseModel):
     format: str
     family: str
@@ -193,7 +186,9 @@ async def handle_models(request: ChatRequest, chat: Chat = Depends(get_chat)):
     """
     Handles chat requests and streams responses to OpenWebUI.
     """
-    logger.debug(f"Incoming request: {request}")
+    logger.info(f"Incoming request: {request}")
+    logger.info(f"Incoming chat: {chat.user.id}")
+
 
     if request.stream:
         # Generate a unique chat ID
