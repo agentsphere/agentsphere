@@ -10,6 +10,7 @@ import time  # Add this import at the top of the file
 
 from app.config import logger, settings
 
+from app.models.repo import Repo
 from app.services.knowledge import getKnowledge
 from app.models.models import Chat, ExecutionRequest, ResponseToolCall, Roles
 from app.models.models import Tool
@@ -95,18 +96,29 @@ async def answerRequest(chat: Chat,request: str):
             Message(role=Roles.SYSTEM.value, content=f"Answer Request").model_dump(),
             Message(role=Roles.USER.value, content=
                     textwrap.dedent(f'''
-            Answer Request to the best of your knowledge                             
-            {request}
+                        You are working on a request which is below but first some context information
+                        _______________________________________________________
+                        Tools:
+                        Shell is available via the tool_calls_str.
+                        shell(command=git clone) # execute shell commands to create edit files, use cli tools, call APIs
+                        whenever you want use the shell use "shell(command=cd clonedDir)" in the tool calls. you can execute multiple shell commands. Just use multiple entries in the tool_calls list.
+                        
+                        use getKnowledge(query=what is/how to ...) within the tool_calls_str to gather information via websearch, its like a google search which aggregates information.
+                        If you are uncertain about the explicit shell commands, for shell commands which only should get information (like cat, ls, gcloud run services list --platform managed) you can always try them right away, there is no harm in that. For shell commands which change the system (like git push, gcloud run deploy) you should be more careful and use getKnowledge to get the information if you are uncertain about the command.
 
-            use:"getKnowledge(query=what is/how to ...)" within the tool_calls_str to gather information via websearch, its like a google search which aggregates information.
-            use "shell(command=gcloud/git/echo...")
-            to execute bash/shell commands to gather the needed information, use cli tools, call APIs
-            Follow the syntax to call shell strictly: example:
-            "shell(command=ls -l)
+                        As long as the task is not done you can continue to execute tools. If you are done set done=true and provide a message to the user.
+                        Do not call tools and set done=true you always have to wait for the tool response. if tool returns with no errors set done=true and don't call the tool again.
+                        _______________________________________________________
 
-            to not use other tools than getKnowledge and shell. You only have shell and getKnowledge available. Dont be afraid to supply an answer after gathering information.
+                        if finsished set done=true, provide your work result to solve the task (might be code, documentation, summary, conecpt, etc.) in the work_result field.
+                        If you are asked to do something like listing resources after calling a shell command, you have to call it using shell command, do not just tell the user how to do it, finish the task (if you are asked to create a git repo create it, if you are asked to provide user specific information call the specific api via a cli, if there is a cli available for that tool it is installed and already setup), please provide the result in the work_result field, and unless specific asked for you don't have to explain the process, just give the answer asked for.
+                        If you are not sure about the work result, set done=true, to the best of your knowledge provide the current answer status of tasked solved in work_result and provide a message to the user and ask for feedback.
 
-            if you gathered the needed information set done=true and provide a message to the user.
+                        if you are done provide short a status message with concise information to the user what has been done and that the work result has been added to the work_result_db.
+                        _______________________________________________________
+                        
+                        Based on who you are, your background skills and tools, solve the current task:
+                        {request}
 ''')).model_dump()
         ]
     )
@@ -131,7 +143,6 @@ class Task(BaseModel):
     unique_id: str = Field(description="A unique jira style id for the task.")
     unique_name: str = Field(description="A unique name for the task.")
     description: str = Field(description="A detailed explanation of what the task entails.")
-    #test: str = Field(description="A test or validation method to ensure the task is completed correctly.")
     context: str = Field(description="Context Information like repo urls, documentation, company programming guidelines")
     dependsOn: Optional[list[str]] = Field(description="A list of tasks refernced by task unique_id that this task depends on.")
 
@@ -144,7 +155,7 @@ class Tasks(BaseModel):
 
 
 
-async def solveSubTask(agent:Agent, chat: Chat, task: Task):
+async def solveSubTask(agent:Agent, chat: Chat, task: Task, repo: Repo):
     logger.info(f"task {task}")
 
     await chat.set_message(f"{agent.role}: Solving subtask {task.description} \n\n")
@@ -156,30 +167,41 @@ async def solveSubTask(agent:Agent, chat: Chat, task: Task):
                         _______________________________________________________
                         Tools:
                         Shell is available via the tool_calls_str.
-                        shell(command=git clone) # execute bash/shell commands to create edit files, use cli tools, call APIs
-                        whenever you want use the shell use "shell(command=cd clonedDir)" in the tool calls. you can execute multiple shell commands. Just use multiple entries in the tool_calls list.
+                        shell(command=) # execute shell commands to use cli tools, call APIs
+                        whenever you want use the shell use "shell(command=)" in the tool calls. you can execute multiple shell commands. Just use multiple entries in the tool_calls list.
                         
-                        use getKnowledge(query=what is/how to ...) within the tool_calls to gather information via websearch, its like a google search which aggregates information.
+                        use getKnowledge(query=what is/how to ...) within the tool_calls_str to gather information via websearch, its like a google search which aggregates information.
+                        If you are uncertain about the explicit shell commands, for shell commands which only should get information (like gcloud run services list --platform managed) you can always try them right away, there is no harm in that. For shell commands which change the system (like git push, gcloud run deploy) you should be more careful and use getKnowledge to get the information if you are uncertain about the command.
+
                         As long as the task is not done you can continue to execute tools. If you are done set done=true and provide a message to the user.
                         
+                        your are working inside a git repo, use the updateFile field to update or create files:
+                        {repo.load_files()}
+
                         _______________________________________________________
                         
                         Based on who you are, your background skills and tools, solve the current task:
                         {task.description}
 
-                        if finsished set done=true, provide your work result to solve the task (might be code, documentation, summary, conecpt, etc.) in the work_result field.
+                        task specific context: {task.context}
+
+                        _______________________________________________________
+
+                        if finsished set done=true, provide your work result to solve the task (might be code, documentation, summary, conecpt, etc.). Use the git repo via updateRepo to store also documentation
+                        If you are asked to do something like listing resources after calling a shell command, you have to call it using shell command, do not just tell the user how to do it, you are a {agent.role} finish the task (if you are asked to provide user specific information call the speicif api via a cli, if there is a cli available for that tool it is installed and already setup), unless specific asked for you don't have to explain the process, just give the answer asked for.
+                        If you are not sure about the work result, set done=true, to the best of your knowledge provide the current answer status of tasked solved in work_result and provide a message to the user and ask for feedback.
 
                         if you are done provide short a status message with concise information to the user what has been done and that the work result has been added to the work_result_db.
                 ''').model_dump()
             ]
-    if task.dependsOn:
-        for dep in task.dependsOn:
-            if chat.id in taskResults and dep in taskResults[chat.id]:
-                logger.info(f"dep {dep} taskResults {taskResults[chat.id][dep]}")
-                messages.append(Message(role=Roles.ASSISTANT.value,content= f"Task Dependency:{dep} was solved with comment: {taskResults[chat.id][dep]}").model_dump())
-            else:
-                logger.info(f"dep {dep} not yet solved")
-                messages.append(Message(role=Roles.ASSISTANT.value,content= f"Task {dep} not yet solved, you can still try to solve yours").model_dump())
+    #if task.dependsOn:
+    #    for dep in task.dependsOn:
+    #        if chat.id in taskResults and dep in taskResults[chat.id]:
+    #            logger.info(f"dep {dep} taskResults {taskResults[chat.id][dep]}")
+    #            messages.append(Message(role=Roles.ASSISTANT.value,content= f"Task Dependency:{dep} was solved with comment: {taskResults[chat.id][dep]}").model_dump())
+    #        else:
+    #            logger.info(f"dep {dep} not yet solved")
+    #            messages.append(Message(role=Roles.ASSISTANT.value,content= f"Task {dep} not yet solved, you can still try to solve yours").model_dump())
 
     res =  await litellm_call(
         response_format = ResponseToolCall,
@@ -198,7 +220,9 @@ async def solveMediumRequest(chat: Chat, request: str):
     """Solves a Request Medium complexity"""
 
     logger.info(f"solveMediumRequest {request}")
+    repo = Repo("gcpterra", is_url=False)
     await chat.set_message("Finding best candidate to solve your request ... \n\n")
+
 
     agent = await litellm_call(
         chat=chat,
@@ -214,21 +238,56 @@ async def solveMediumRequest(chat: Chat, request: str):
     logger.info(f"Agent {agent}")
 
     await chat.set_message(f"Starting Agent with role {agent.role} with background '{agent.background}' ... \n\n")
-  
-    #await chat.set_message(f"{agent.role}: Breaking down your request into subtasks and research steps ... \n\n")
+    """
+    messages=[
+                Message(role=Roles.SYSTEM.value, content=f"You are {agent.role} with background {agent.background} and skill {agent.skills}" ).model_dump(),
+                Message(role=Roles.USER.value, content=f'''
+                        You are working on a user request but first some context information.
+                        The User Request should be medium complexity, which usually means it needs to be broken down into smaller tasks before you can tackle it. But misclassified tasks can happen and it might be easy and you can answer it right away after calling some shell commands or gathering information. 
+                        _______________________________________________________
+                        Tools:
+                        Shell is available via the tool_calls_str.
+                        shell(command=git clone) # execute shell commands to create edit files, use cli tools, call APIs
+                        whenever you want use the shell use "shell(command=cd clonedDir)" in the tool calls. you can execute multiple shell commands. Just use multiple entries in the tool_calls list.
+                        
+                        use getKnowledge(query=what is/how to ...) within the tool_calls_str to gather information via websearch, its like a google search which aggregates information.
+                        If you are uncertain about the explicit shell commands, for shell commands which only should get information (like cat, ls, gcloud run services list --platform managed) you can always try them right away, there is no harm in that. For shell commands which change the system (like git push, gcloud run deploy) you should be more careful and use getKnowledge to get the information if you are uncertain about the command.
+
+                        You can continue to execute tools. 
+                        If the request is easy return done=true, message=a short message to the user with what you have done, and work_result= the answer to the query.
+                        if the request is medium complex and needs multiple subtasks just immediately return done=true, message="MEDIUM", and leave work_result blank (work_result="").
+                        _______________________________________________________
+                        
+                        request: 
+                        {request}
+                ''').model_dump()
+            ]
+    
+    res =  await litellm_call(
+        response_format = ResponseToolCall,
+        chat = chat,
+        request=request,
+        messages = messages,
+    )
+    if res.work_result != "":
+        logger.info(f"Agent {agent.role} finished the task with work_result {res.work_result}")
+        #await chat.set_message(f"{agent.role}: {res.work_result} \n\n")
+        return "fin"
+    """
+    await chat.set_message(f"{agent.role}: Breaking down your request into subtasks and research steps ... \n\n")
  
-    #tasks = await litellm_call(
-    #    chat=chat,
-    #    oneShot=True,
-    #    response_format=Tasks,
-    #    messages=[
-    #        Message(role=Roles.SYSTEM.value, content=f"You are: {agent.model_dump()}").model_dump(),
-    #        Message(role=Roles.USER.value, content=f'''Based on who you are, your background skills and tools. Analyse the request and break it #down into multiple subtasks and research steps including steps to gather information with google search queries. Just include steps which #are necessary to solve the request, gather the needed information. Not more. No extra steps, no "nice-to-have". Always consider Best #practices for the considered tool and workflow you use. Request:
-    #                {request}
-    #        ''').model_dump()
-    #    ],
-    #)
-    tasks= Tasks(tasks=[Task(unique_id="DE-1",unique_name="Task",description=request,context="",dependsOn=[])])
+    tasks = await litellm_call(
+        chat=chat,
+        oneShot=True,
+        response_format=Tasks,
+        messages=[
+            Message(role=Roles.SYSTEM.value, content=f"You are: {agent.model_dump()}").model_dump(),
+            Message(role=Roles.USER.value, content=f'''Based on who you are, your background skills and tools. Analyse the request and break it down into multiple subtasks. Just include steps which are necessary to solve the request. Not more. No extra steps, no "nice-to-have". Always consider Best practices for the considered tool and workflow you use. Request:
+                    {request}
+            ''').model_dump()
+        ],
+    )
+    #tasks= Tasks(tasks=[Task(unique_id="DE-1",unique_name="Task",description=request,context="",dependsOn=[])])
 
     #tasksReviewed = await litellm_call(
     #    chat=chat,
@@ -246,14 +305,14 @@ async def solveMediumRequest(chat: Chat, request: str):
     #    ],
     #)
 
-    #taskString = "\n\n".join([f"* {task.description}" for task in tasks.tasks]) + "\n\n ... "
+    taskString = "\n\n".join([f"* {task.description}" for task in tasks.tasks]) + "\n\n ... "
 
-    #await chat.set_message(f"{agent.role}: Tasks: \n\n {taskString}")
+    await chat.set_message(f"{agent.role}: Tasks: \n\n {taskString}")
 
     # Creating jira Subtasks, toDO
 
     for task in tasks.tasks:
-        result = await solveSubTask(agent=agent,chat=chat, task=task)
+        result = await solveSubTask(agent=agent,chat=chat, task=task, repo=repo)
       
     return "fin"
 

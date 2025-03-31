@@ -169,7 +169,9 @@ def run_command(command):
     print("end")
 
     os.close(master_fd)
-    return output
+    proc.wait()
+
+    return output, proc.returncode
     
 
 def split_command(command_str):
@@ -183,74 +185,82 @@ def strip_surrounding_quotes(cmd: str) -> str:
 async def receive_file():
 
     uri = f"{WSS_SERVER}?token={TOKEN}"
-    
+
     while True:
         try:
             async with websockets.connect(uri) as websocket:
-                print("Connected to server. Awaiting instructions...")
 
-                # Receive filename
-                execution_type = await websocket.recv()
-                if execution_type == "COMMAND":
+                while True:
+                    print("Connected to server. Awaiting instructions...")
 
-                    command = await websocket.recv()
-                    print(f"getting command {command}")
-                    command = strip_surrounding_quotes(command)
-                    print(f"command {command}")
+                    # Receive filename
+                    execution_type = await websocket.recv()
+                    if execution_type == "COMMAND":
+                        try: 
+                            command = await websocket.recv()
+                            print(f"getting command {command}")
+                            command = strip_surrounding_quotes(command)
+                            print(f"command {command}")
 
-                    out = []
-                    for c in command.split("&&"):
+                            out = []
+                            for c in command.split("&&"):
 
-                        #print(f"c {c}")
-                        out.append(f"{c}")
+                                #print(f"c {c}")
+                                out.append(f"{c}")
 
-                        split = split_command(c)
-
-                        if "cd" == split[0]:
-                            os.chdir(split[1])
-                            print(f"cd {split[1]}")
-                            out.append(f"currentDir: {os.getcwd()}")
-                        elif "pwd" in split[0]:
-                            print(f"pwd {os.getcwd()}")
-                            out.append(f"currentDir: {os.getcwd()}")
-                        else:
-                            o = run_command(c)
-                            cout = clean_terminal_output(o)
-                            out.append(cout)
-                    print(f"out {out}")
-                   
-                    await websocket.send(f"{out}") 
-
-                elif execution_type == "FILE":
-                    filename = await websocket.recv()
-                    print(f"Receiving file: {filename}")
+                                split = split_command(c)
 
 
-                    # Receive file content in chunks
-                    with open(f"received_{filename}", "wb") as f:
-                        while True:
-                            chunk = await websocket.recv()
-                            if chunk == b"EOF":  # End of file signal
-                                break
-                            f.write(chunk)
+                                status = 0
+                                if "cd" == split[0]:
+                                    os.chdir(split[1])
+                                    print(f"cd {split[1]}")
+                                    out.append(f"currentDir: {os.getcwd()}")
+                                elif "pwd" in split[0]:
+                                    print(f"pwd {os.getcwd()}")
+                                    out.append(f"currentDir: {os.getcwd()}")
+                                else:
+                                    o, st = run_command(c)
+                                    cout = clean_terminal_output(o)
+                                    status = st
+                                    out.append(cout)
+                            print(f"status {status}, terminal output: {out}")
+                        
+                            await websocket.send(f"status {status}, terminal output: {out}") 
+                        except Exception as e:  
+                            print(f"Error executing command: {e}")
+                            await websocket.send(f"Error executing command: {e}")
 
-                    print(f"File {filename} received and saved as received_{filename}")
+                    elif execution_type == "FILE":
+                        filename = await websocket.recv()
+                        print(f"Receiving file: {filename}")
 
-                    # Set file as executable
-                    st = os.stat(f"received_{filename}")
-                    os.chmod(f"received_{filename}", st.st_mode | stat.S_IEXEC)
 
-                    # Run the received file
-                    process = await asyncio.create_subprocess_exec(
-                        f"./received_{filename}",
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE
-                    )
+                        # Receive file content in chunks
+                        with open(f"received_{filename}", "wb") as f:
+                            while True:
+                                chunk = await websocket.recv()
+                                if chunk == b"EOF":  # End of file signal
+                                    break
+                                f.write(chunk)
 
-                    stdout, stderr = await process.communicate()
+                        print(f"File {filename} received and saved as received_{filename}")
 
-                    # Send acknowledgment
-                    await websocket.send(f"Process Output:\nReturn Code: {process.returncode}\nError: {stderr.decode()}\nOutput: {stdout.decode()}")
+                        # Set file as executable
+                        st = os.stat(f"received_{filename}")
+                        os.chmod(f"received_{filename}", st.st_mode | stat.S_IEXEC)
+
+                        # Run the received file
+                        process = await asyncio.create_subprocess_exec(
+                            f"./received_{filename}",
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE
+                        )
+
+                        stdout, stderr = await process.communicate()
+
+                        # Send acknowledgment
+                        await websocket.send(f"Process Output:\nReturn Code: {process.returncode}\nError: {stderr.decode()}\nOutput: {stdout.decode()}")
 
         except websockets.exceptions.ConnectionClosedError:
             print("Connection lost. Reconnecting in 5 seconds...")

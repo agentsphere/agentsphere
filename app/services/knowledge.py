@@ -21,7 +21,7 @@ from app.config import settings, tzinfo, logger
 from duckduckgo_search import DDGS
 from fp.fp import FreeProxy
 
-BLACKLIST=["geeksforgeeks.org"]
+BLACKLIST=["geeksforgeeks.org", "youtube.com"]
 import mongomock
 # Use an in-memory MongoDB mock
 client = mongomock.MongoClient()
@@ -107,33 +107,70 @@ def perform_web_searchDDGS(query, max_results=10):
         
     logger.error(f"Failed to perform web search after {tries} attempts.")
     return urls
-
-options = webdriver.ChromeOptions()
-options.add_argument("start-maximized")
-options.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:135.0) Gecko/20100101 Firefox/135.0")
-
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
 from selenium_stealth import stealth
+from webdriver_manager.chrome import ChromeDriverManager
 
-driver = webdriver.Chrome(options=options)
 
-stealth(driver,
+def create_stealth_driver():
+    """
+    Initializes a Chrome WebDriver with stealth configurations to reduce detection.
+
+    Returns:
+        webdriver.Chrome: A configured instance of Chrome WebDriver.
+    """
+    chrome_options = Options()
+
+    # Browser window and behavior
+    chrome_options.add_argument("--start-maximized")
+    
+    # Uncomment for headless mode if needed (new mode is better for stealth)
+    chrome_options.add_argument("--headless=new")
+
+    # Custom user-agent to mimic a real browser
+    chrome_options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
+
+    # Disable automation-related flags to avoid detection
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option("useAutomationExtension", False)
+    chrome_options.add_argument("--disable-notifications")
+
+    # Initialize Chrome WebDriver
+    driver = webdriver.Chrome(
+        service=Service(ChromeDriverManager().install()),
+        options=chrome_options
+    )
+
+    # Apply stealth techniques
+    stealth(
+        driver,
         languages=["en-US", "en"],
-        vendor="Google Inc.",
+        vendor="Google Inc. (Apple)",
         platform="MacIntel",
-        webgl_vendor="Intel Inc.",
-        renderer="Intel Iris OpenGL Engine",
+        webgl_vendor="Google Inc. (Apple)",
+        renderer="ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Max, Unspecified Version)",
         fix_hairline=True,
-        )
-def getPageWithSelenium(url):
-    driver = webdriver.Chrome()
+    )
+
+    return driver
+
+
+def getPageWithSelenium(url: str) -> str:
+    """getPageWithSelenium
+    Fetches the HTML content of a page using a stealth-enabled Selenium driver.
+
+    Args:
+        url (str): The target webpage URL.
+
+    Returns:
+        str: HTML content of the loaded page.
+    """
+    driver = create_stealth_driver()
+
     try:
         driver.get(url)
-    except Exception as e:
-        print("WebDriver error:", e)
-        driver.quit()
-        driver = webdriver.Chrome()  # restart
-        driver.get(url)
-    try:
         WebDriverWait(driver, 3).until(
             lambda d: d.execute_script(
                 """
@@ -155,6 +192,7 @@ def getPageWithSelenium(url):
     finally:
         driver.quit()
     return None
+
 
 
 def concatenate_strings(lst, max_char):

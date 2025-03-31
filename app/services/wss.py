@@ -13,9 +13,6 @@ from app.services.auth import fake_executioner_clientId
 # A structure to store user -> websocket mapping
 connected_receivers: Dict[str, WebSocket] = {}
 
-test_token = "mytoken"
-
-
 
 
 async def add_connection(websocket: WebSocket, token: str = Query(...)):
@@ -34,19 +31,22 @@ async def add_connection(websocket: WebSocket, token: str = Query(...)):
     try:
         while True:
             await asyncio.sleep(1)
+    except Exception as e:
+        logger.error(f"Error in WebSocket connection: {e}")
     except WebSocketDisconnect:
-        logger.warning(f"Receiver disconnected: {test_token}")
-        if test_token in connected_receivers:
-            del connected_receivers[test_token]
+        logger.warning(f"Receiver disconnected: {uuid}")
+        if uuid in connected_receivers:
+            del connected_receivers[uuid]
 
 
 async def executeShell(chat: Chat, command: str):
     """Executes a shell command and returns the output."""
     try:
         logger.info(f"Executing shell command: {command}")
+        await chat.set_message(f"Executing shell command: {command} \n\n")
         ws = connected_receivers.get(chat.user.id)
         if ws is None or not isinstance(ws, WebSocket):
-            logger.warning(f"No valid WebSocket found for uuid {chat.user.uuid}")
+            logger.warning(f"No valid WebSocket found for uuid {chat.user.id}")
             return JSONResponse(status_code=404, content={"error": "No receiver found for the provided token"})
 
         await ws.send_text("COMMAND")

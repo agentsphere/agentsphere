@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     INTROSPECTION_URL: str = ""
     LLM_MODEL: str = "ollama_chat/qwen2.5-coder:32b"
     ANTHROPIC_API_KEY: str = ""
+    SERPER_API_KEY: str = ""
+    FIREWORKS_AI_API_KEY: str = ""
 
 
     # Use ConfigDict instead of class-based Config

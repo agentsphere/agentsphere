@@ -91,7 +91,8 @@ class ResponseToolCall(BaseModel):
 
     done: bool = Field(..., description="True if the task is done, False otherwise.")
     message: str = Field(..., description="Message to the user.")
-    work_result: str = Field(..., description="Work result of the task.")
+    repoUpdate: dict = Field(..., description="Files updates format {filePath: content}.")
+    #work_result: str = Field(..., description="Work result of the task.")
 
     # Mark queue as a private attribute that's not part of the model schema
     tool_calls: List[ToolCall] = Field(default_factory=list, exclude=True)
@@ -104,10 +105,21 @@ class ResponseToolCall(BaseModel):
 
         for call_str in tool_calls_str:
             try:
+
+                
+                pattern = r'^\w+\(\w+=([\s\S]+)\)$'
+
+                if not bool(re.match(pattern, call_str)):
+                    raise ValueError(f"Invalid tool call string: {call_str}")
                 name_part, params_part = call_str.split("(", 1)
                 tool = name_part.strip()
                 params_raw = params_part.rstrip(")")
                 # Handle multiple params, e.g. key1=value1, key2=value2
+                if tool is None or tool not in ["getKnowledge", "shell"]:
+                    raise ValueError(f"Invalid tool name: {tool}, only shell and getKnowledge available")
+                if params_raw is None:
+                    raise ValueError(f"Invalid tool name: {tool}, only shell and getKnowledge available")
+                
                 params = dict(
                     item.strip().split("=", 1)
                     for item in params_raw.split(",")
