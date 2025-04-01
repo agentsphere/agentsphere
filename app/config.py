@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     SERPER_API_KEY: str = ""
     FIREWORKS_AI_API_KEY: str = ""
+    BASE_REPO_PATH: str = "./repos"
 
 
     # Use ConfigDict instead of class-based Config

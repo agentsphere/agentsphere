@@ -54,16 +54,17 @@ async def executeShell(chat: Chat, command: str):
         if cmd:
             logger.info(f"sending command {cmd}")
             await ws.send_text(f"{cmd}")
+
+            try:
+                response = await ws.receive_text()
+                logger.info(f"Client response: {response}")
+                return response
+            except Exception as recv_error:
+                logger.error(f"Error receiving response from client: {recv_error}")
+                return JSONResponse(status_code=500, content={"error": "No acknowledgment from client"})
         else:
             logger.info("no command found")
     
-        try:
-            response = await ws.receive_text()
-            logger.info(f"Client response: {response}")
-            return response
-        except Exception as recv_error:
-            logger.error(f"Error receiving response from client: {recv_error}")
-            return JSONResponse(status_code=500, content={"error": "No acknowledgment from client"})
     except Exception as e:
         logger.error(f"Error executing shell command: {e}")
         return f"Error executing command: {e}"

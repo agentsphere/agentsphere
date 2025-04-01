@@ -6,6 +6,12 @@ from pydantic import BaseModel, EmailStr, Field, PrivateAttr, model_validator, r
 
 
 
+class DifficultyLevel(str, Enum):
+    """Enum representing different levels of difficulty."""
+    EASY = "easy"
+    MEDIUM = "medium"
+    COMPLEX = "complex"
+
 class User(BaseModel):
     """
     Represents a user in the system with optional metadata.
@@ -34,6 +40,8 @@ class Message(BaseModel):
     content: str = Field(..., description="The textual content of the message.")
 
 
+
+
 class Chat(BaseModel):
     """
     Represents a chat session containing a unique ID, the user, and the messages exchanged.
@@ -41,6 +49,7 @@ class Chat(BaseModel):
     id: str = Field(..., description="Unique identifier for the chat session.")
     user: User 
     messages: list[Message] = Field(default_factory=list, description="List of messages in the chat.")
+    category: Optional[DifficultyLevel] = Field(default = None, description="lvl of the chat")
 
     # Mark queue as a private attribute that's not part of the model schema
     _queue: asyncio.Queue = PrivateAttr(default_factory=asyncio.Queue)
@@ -86,56 +95,22 @@ class ToolCall(BaseModel):
         return values
 
 
-class ResponseToolCall(BaseModel):
-    tool_calls_str: list[str] = Field(..., description="List of tool calls to execute.")
+class ResultType(str, Enum):   
+    """Defines the type of result."""
+    TEXT = "text"
+    REPO = "repo"
 
+    def __str__(self):
+        return self.value
+    
+
+class ResponseToolCall(BaseModel):
     done: bool = Field(..., description="True if the task is done, False otherwise.")
     message: str = Field(..., description="Message to the user.")
-    repoUpdate: dict = Field(..., description="Files updates format {filePath: content}.")
-    #work_result: str = Field(..., description="Work result of the task.")
-
-    # Mark queue as a private attribute that's not part of the model schema
-    tool_calls: List[ToolCall] = Field(default_factory=list, exclude=True)
-
-    @model_validator(mode="before")
-    @classmethod
-    def parse_tool_calls_str(cls, values):
-        tool_calls_str = values.get("tool_calls_str", [])
-        parsed_tool_calls = []
-
-        for call_str in tool_calls_str:
-            try:
-
-                
-                pattern = r'^\w+\(\w+=([\s\S]+)\)$'
-
-                if not bool(re.match(pattern, call_str)):
-                    raise ValueError(f"Invalid tool call string: {call_str}")
-                name_part, params_part = call_str.split("(", 1)
-                tool = name_part.strip()
-                params_raw = params_part.rstrip(")")
-                # Handle multiple params, e.g. key1=value1, key2=value2
-                if tool is None or tool not in ["getKnowledge", "shell"]:
-                    raise ValueError(f"Invalid tool name: {tool}, only shell and getKnowledge available")
-                if params_raw is None:
-                    raise ValueError(f"Invalid tool name: {tool}, only shell and getKnowledge available")
-                
-                params = dict(
-                    item.strip().split("=", 1)
-                    for item in params_raw.split(",")
-                    if "=" in item
-                )
-                parsed_tool_calls.append(ToolCall(tool=tool, params=params))
-            except Exception as e:
-                raise ValueError(f"Failed to parse tool call string '{call_str}': {e}")
-
-        values["tool_calls"] = parsed_tool_calls
-        return values
-
-    class Config:
-        arbitrary_types_allowed = True
-
-
+    repo_update: dict = Field(..., description="Files updates format {filePath: content}.")
+    text_result: str = Field(..., description="Text result of the task.")
+    get_knowledge: list[str] = Field(..., description="Queries to use to retrieve knowledge.")
+    commands: list[str] = Field(..., description="Commands to execute.")
 
 
 
@@ -224,3 +199,35 @@ __all__ = [
     "ToolFindResponse",
     "TokenResponse"
 ]
+
+
+class Agent(BaseModel):
+    """
+    Represents an agent with a specific role, background, skill set, and available tools.
+    """
+
+    role: str = Field(description="The primary role or job function of the agent.")
+    background: str = Field(description="A brief background of the agent, including experience and expertise.")
+    skills: str = Field(description="A list of key skills that the agent possesses.")
+
+
+class Task(BaseModel):
+    """
+    Represents a single task with rollback instructions, a description, and a test.
+    """
+    unique_id: str = Field(description="A unique jira style id for the task.")
+    unique_name: str = Field(description="A unique name for the task.")
+    description: str = Field(description="A detailed explanation of what the task entails.")
+    context: str = Field(description="Context Information like repo urls, documentation, company programming guidelines")
+    dependsOn: Optional[list[str]] = Field(description="A list of tasks refernced by task unique_id that this task depends on.")
+    result_type: ResultType = Field(description="The type of result expected from the task.")
+
+
+class Tasks(BaseModel):
+    """
+    Represents a collection of tasks.
+    """
+    repo_url: Optional[str] = Field(description="If mentioned the URL of the repository where the tasks are stored.")
+    repo_name: Optional[str] = Field(description="Repo name.")
+    tasks: list[Task] = Field(description="A list of individual tasks to be executed.")
+

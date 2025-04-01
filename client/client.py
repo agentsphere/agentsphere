@@ -200,18 +200,33 @@ async def receive_file():
                             command = await websocket.recv()
                             print(f"getting command {command}")
                             command = strip_surrounding_quotes(command)
+
                             print(f"command {command}")
 
                             out = []
                             for c in command.split("&&"):
+                                    # Check if the command starts with './'
+
+                                split = split_command(c)
+                                if c.startswith("./"):
+                                    # Extract the file name after './'
+                                    file_name = split[0]
+                                    rightmost_part = file_name.split("/")[-1]  # Get the last part after the last '/'
+
+
+                                    # Check if the file exists in the current directory
+                                    if not os.path.isfile(file_name):
+                                        print(f"File '{file_name}' does not exist. Removing './' prefix.")
+                                        split[0] = rightmost_part  # Remove './' prefix
+
 
                                 #print(f"c {c}")
                                 out.append(f"{c}")
 
-                                split = split_command(c)
 
 
                                 status = 0
+
                                 if "cd" == split[0]:
                                     os.chdir(split[1])
                                     print(f"cd {split[1]}")

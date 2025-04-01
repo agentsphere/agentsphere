@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 
 import requests
 
@@ -8,27 +9,27 @@ import os
 from typing import Dict, List, Optional
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException,status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import logging
 from app.config import settings, tzinfo, logger
 import json
 
-from app.models.models import User, Chat
+from app.models.models import Message, User, Chat
 from app.services.queue import add_to_queue
 from pydantic import BaseModel
 from app.services.llm import process_request
 
-TOKEN=os.getenv("TOKEN")
+TOKEN = os.getenv("TOKEN")
 
 
 def introspect_token(token: str) -> dict:
-    if token is None: 
-       raise HTTPException(
+    if token is None:
+        raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token introspection failed"
-        ) 
+        )
     ctoken = token.split(" ", 1)[1] if token.startswith("Bearer ") else token
     introspection_url = settings.INTROSPECTION_URL
 
@@ -38,7 +39,7 @@ def introspect_token(token: str) -> dict:
     logger.debug(f"id {client_id} sec {client_secret}")
     response = requests.post(
         introspection_url,
-        headers={"Content-Type":"application/x-www-form-urlencoded"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
         data={"token": ctoken, "client_id": client_id, "client_secret": client_secret}
     )
     if response.status_code == 200:
@@ -65,9 +66,6 @@ def get_user_headers(
         "token": token
     }
 
-def get_chat(user_headers: dict = Depends(get_user_headers)):
-    introspect_token(user_headers.get("token", None))
-    return Chat(id=str(uuid.uuid4()),user = User(**user_headers))
 
 def validate_token(token_header: dict = Depends(get_user_headers)):
     logger.debug(f"token_header {token_header}")
@@ -75,16 +73,14 @@ def validate_token(token_header: dict = Depends(get_user_headers)):
     return
 
 
-logger=logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
-class Message(BaseModel):
-    role: str
-    content: str
 
 class ChatRequest(BaseModel):
     model: str
     messages: List[Message]
     stream: Optional[bool] = False
+
 
 class ModelDetails(BaseModel):
     format: str
@@ -92,6 +88,7 @@ class ModelDetails(BaseModel):
     families: Optional[List[str]] = None
     parameter_size: str
     quantization_level: str
+
 
 class Model(BaseModel):
     name: str
@@ -101,7 +98,35 @@ class Model(BaseModel):
     digest: str
     details: ModelDetails
 
+
 router = APIRouter()
+
+
+def generate_hash(doc: str) -> str:
+    """
+    Generate a unique hash based on the document content and URL.
+    """
+    hash_input = doc.encode('utf-8')
+    return hashlib.md5(hash_input).hexdigest()
+
+
+chats = {}
+
+
+def get_user(user_headers: dict = Depends(get_user_headers)):
+    """
+    Dependency function to get or create a chat instance.
+    """
+    introspect_token(user_headers.get("token", None))
+    return User(**user_headers)
+    logger.info(f"get chat req {req}")
+    id = generate_hash(user.id + req.messages[0]["content"])
+    if len(req.messages) == 1:
+        c = Chat(id=id, user=user)
+        chats[id] = c
+        return c
+    else:
+        return chats[id]
 
 
 @router.get("/api/tags", response_model=Dict[str, List[Model]])
@@ -125,13 +150,14 @@ def list_models(token: str = Depends(validate_token)):
         ]
     }
 
+
 @router.get("/api/version")
 def get_version(token: str = Depends(validate_token)):
     return {"version": "0.5.7"}
 
 
 def getResponseObject(message: str, finish: bool = False):
-    return  json.dumps({
+    return json.dumps({
         "model": "superman",
         "created_at": f"{datetime.now(tzinfo)}",
         "message": {
@@ -147,15 +173,18 @@ def getResponseObject(message: str, finish: bool = False):
         "eval_duration": 2
     })
 
+
 class CallbackData(BaseModel):
     data: str
+
 
 @router.post("/callback/{chat_id}")
 async def subagent_callback(chat_id: str, data: CallbackData):
     add_to_queue(chat_id, data.data)
     return {"status": "ok"}
 
-def stream_response(content,role="assistant", finish=False):
+
+def stream_response(content, role="assistant", finish=False):
     """
     Formats a message for SSE compatible with Open WebUI.
 
@@ -177,35 +206,41 @@ def stream_response(content,role="assistant", finish=False):
         },
         "done": finish
     }
-    
+
     return json.dumps(sse_data)
 
 
 @router.post("/api/chat")
-async def handle_models(request: ChatRequest, chat: Chat = Depends(get_chat)):
+async def handle_models(request: ChatRequest, user: User = Depends(get_user)):
     """
     Handles chat requests and streams responses to OpenWebUI.
     """
     logger.info(f"Incoming request: {request}")
-    logger.info(f"Incoming chat: {chat.user.id}")
 
+    id = generate_hash(user.id + request.messages[0].content)
+    chat = None
+    if len(request.messages) == 1:
+        chat = Chat(id=id, user=user)
+        chats[id] = chat
+    else:
+        chat = chats[id]
+    logger.info(f"Incoming chat: {chat.user.id}")
 
     if request.stream:
         # Generate a unique chat ID
         async def event_stream():
             """
-            Async generator to stre‚am messages to the client.
+            Async generator to stream messages to the client.
             """
             try:
-                userRequest=request.messages[0].content
-                asyncio.create_task(process_request(chat=chat,request=userRequest))
+                asyncio.create_task(process_request(chat=chat, messages=request.messages))
 
                 while True:
                     # Wait for the next message from the queue
                     msg = await chat.getQueueMsg()
                     if msg == "[DONE]":
                         logger.info(f"Streaming completed for chat_id: {chat.id}")
-                        yield getResponseObject("", finish=True)+ "\n"
+                        yield getResponseObject("", finish=True) + "\n"
                         break
                     yield stream_response(msg) + "\n"
             finally:

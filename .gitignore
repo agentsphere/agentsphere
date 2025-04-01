@@ -13,6 +13,10 @@ env/
 venv/
 ENV/
 
+# repo cache
+repos/
+
+
 # Environment variables
 *.env
 *.env.*

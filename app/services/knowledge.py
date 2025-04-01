@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 import uuid
 from bson import ObjectId
 from pydantic import BaseModel, Field
@@ -57,7 +58,27 @@ from bs4 import BeautifulSoup
 
 url = "https://google.serper.dev/search"
 
+
+shortTermWebSearchCache={}
+
+def clean_url(url: str) -> str:
+    """
+    Removes query parameters and anchors from a URL, leaving only the main part and path.
+
+    Args:
+        url (str): The original URL.
+
+    Returns:
+        str: The cleaned URL.
+    """
+    parsed_url = urlparse(url)
+    # Reconstruct the URL without query and fragment
+    cleaned_url = urlunparse(parsed_url._replace(query="", fragment=""))
+    return cleaned_url
+
 def perform_web_search(query):
+    if query in shortTermWebSearchCache:
+        return shortTermWebSearchCache[query]
     payload = json.dumps({
         "q": f"{query}"
     })
@@ -73,14 +94,14 @@ def perform_web_search(query):
     all_links = []
 
     for item in data.get("organic", []):
-        all_links.append(item.get("link"))
+        all_links.append(clean_url(item.get("link")))
         for sitelink in item.get("sitelinks", []):
-            all_links.append(sitelink.get("link"))
-
-
+            all_links.append(clean_url(sitelink.get("link")))
 
     logger.info(all_links)
-    return all_links
+    shortTermWebSearchCache[query] = all_links
+    return list(set(all_links))
+
 def perform_web_searchDDGS(query, max_results=10):
     """Perform a web search using DuckDuckGo and return a list of URLs."""
     logger.info(f"Performing web search for: {query}")
@@ -269,41 +290,69 @@ def split(doc):
         # dont need to be split
         return [md(str(doc))]
 
+
+mainContentSelectors={"https://cloud.google.com/": ".devsite-article", "https://stackoverflow.com/questions": ".inner-content", "": "#provider-doc", "https://www.reddit.com/r/" :".main-content""}
+
 def getDocsFromHTML(html, url):
     if html is None or html == "":
         logger.info("No HTML content found.")
         return None
     soup = BeautifulSoup(html, 'html.parser')
-    total_length = len(soup.get_text(strip=True))
-    if total_length > 120000:
-        logger.warning("Website text larger than max size, propably junk skip and add to blacklist {url}")
-        BLACKLIST.append(url)
-        return None
-    for tag in soup(['script', 'style', 'header', "footer", "meta", "svg"]):
-        tag.decompose()  # Completely removes the tag from the soup
-    text_length_per_parent = {}
-    if total_length == 0:
-        logger.info("No text content found.")
-        return None
 
-    # Iterate over all elements and count text length
-    for element in soup.find_all():
-        text_length = len(element.get_text(strip=True))
-        ratio = text_length / total_length
-        if ratio < 0.7: # i dont want Elements with less than 70% of the main page (rather take 100%)
+    matched_selector = None
+
+    for prefix, selector in mainContentSelectors.items():
+        if url.startswith(prefix):
+            matched_selector = selector
             break
-        ratio=text_length/total_length
-        text_length_per_parent[ratio] = element
 
-    # Get the main text element which is closest to 80% of the total text length, no heading, footer, etc.
-    _, main = min(text_length_per_parent.items(), key=lambda x: abs(x[0] - 0.8))
-    le=len(main.get_text(strip=True))
-    if le > DOCLIMIT:
-        logger.info(f"Doc larger than max size need to chunk it {le}")
-        return split(main)
+    if matched_selector:
+        logger.info(f"Matched selector: {matched_selector}")
+        main_content = soup.select_one(matched_selector)
+        if main_content:
+            extracted_html = str(main_content)
+            soup = BeautifulSoup(extracted_html, 'html.parser')
+            le=len(soup.get_text(strip=True))
+            if le > DOCLIMIT:
+                logger.info(f"Doc larger than max size need to chunk it {le}")
+                return split(soup)
+            else:
+                logger.info(f"Doc smaller than max size just return it")        
+                return [md(str(soup))]
+        else:
+            logger.warning(f"Should not be here No content found with selector: {matched_selector}")
     else:
-        logger.info(f"Doc smaller than max size just return it")        
-        return [md(str(main))]
+    
+        total_length = len(soup.get_text(strip=True))
+        if total_length > 150000:
+            logger.warning("Website text larger than max size, propably junk skip and add to blacklist {url}")
+            BLACKLIST.append(url)
+            return None
+        for tag in soup(['script', 'style', 'header', "footer", "meta", "svg"]):
+            tag.decompose()  # Completely removes the tag from the soup
+        text_length_per_parent = {}
+        if total_length == 0:
+            logger.info("No text content found.")
+            return None
+
+        # Iterate over all elements and count text length
+        for element in soup.find_all():
+            text_length = len(element.get_text(strip=True))
+            ratio = text_length / total_length
+            if ratio < 0.7: # i dont want Elements with less than 70% of the main page (rather take 100%)
+                break
+            ratio=text_length/total_length
+            text_length_per_parent[ratio] = element
+
+        # Get the main text element which is closest to 80% of the total text length, no heading, footer, etc.
+        _, main = min(text_length_per_parent.items(), key=lambda x: abs(x[0] - 0.8))
+        le=len(main.get_text(strip=True))
+        if le > DOCLIMIT:
+            logger.info(f"Doc larger than max size need to chunk it {le}")
+            return split(main)
+        else:
+            logger.info(f"Doc smaller than max size just return it")        
+            return [md(str(main))]
    
 def delete_vector_with_condition(condition: str):
     vector.delete(collection_name="knowledge", filter=condition)
@@ -364,6 +413,7 @@ def load_from_url(url, query):
 
     docs = getDocsFromHTML(getPageWithSelenium(url), url)
     if docs is None:
+        logger.warning(f"Failed to load documents from URL: {url}")
         return None
     from app.services.llm import getQueriesForDocument
 
@@ -461,19 +511,35 @@ async def summarize_knowledge(query: str, knowledge: str, chat: Chat):
         chat=chat,
         response_format=KnowledgeSummary,
         messages=[
-            Message(role=Roles.SYSTEM.value, content=f"You are a research specialist").model_dump(),
-            Message(role=Roles.USER.value, content=f'''Given the following Documentation: 
-                
-                    {knowledge}
-                    
-                    _____________________________________git ___
+    Message(role=Roles.SYSTEM.value, content=(
+        "You are a helpful and detail-oriented research assistant. "
+        "Your job is to extract and explain relevant information from internal documentation in a clear, comprehensive, and self-contained manner. "
+        "Your responses should read as if YOU know the answer, not as if you are pointing to the documentation. "
+        "Do not mention the documentation at all. Do not make anything up."
+    )).model_dump(),
+    Message(role=Roles.USER.value, content=f'''You are given internal documentation below. Use only the information it contains to answer the query.
 
-                    Dont make stuff up. Answer the query with information from the documentation.
-                    If the documentation is irrelevant for the query set is_irrelevant to true. 
-                    Do not reference the documentation in your answer, provide all the information needed which is relevant to the query in YOUR answer.
-                    query:
-                    {query}
-            ''').model_dump()
+--- DOCUMENTATION START ---
+{knowledge}
+--- DOCUMENTATION END ---
+
+Now, answer the following query:
+
+{query}
+
+Your response must:
+- Contain all relevant details available in the documentation.
+- Be fully self-contained (do not say "as per the documentation").
+- Be clear and structured if possible (bullets, sections).
+- If the documentation does not contain relevant information, respond with:
+    "is_irrelevant": true
+
+Respond only with the final answer object in JSON format:
+{{
+    "answer": "<your complete answer>",
+    "is_irrelevant": false | true
+}}
+''').model_dump()
         ])
    
 
