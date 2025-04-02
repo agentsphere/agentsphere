@@ -1,4 +1,5 @@
 import asyncio
+import json
 import subprocess
 import os
 import pty
@@ -241,7 +242,7 @@ async def receive_file():
                                     out.append(cout)
                             print(f"status {status}, terminal output: {out}")
                         
-                            await websocket.send(f"status {status}, terminal output: {out}") 
+                            await websocket.send(json.dumps({"status_code":status, "content": f"terminal output: {out}"}))
                         except Exception as e:  
                             print(f"Error executing command: {e}")
                             await websocket.send(f"Error executing command: {e}")

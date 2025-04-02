@@ -78,3 +78,6 @@ Thumbs.db
 
 # Lock files
 *.lock
+
+#gcloud key
+gcloud-key.json

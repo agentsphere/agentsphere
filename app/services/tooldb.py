@@ -1,29 +1,23 @@
-
-# Use an in-memory MongoDB mock
-import mongomock
 from pydantic import ValidationError
-from app.config import logger
+from app.config import logger, tool_collection
 from app.models.models import Tool
 
-client = mongomock.MongoClient()
-db = client["tooldb"]
-collection = db["tool_collection"]
 
 shell=Tool(name= "bash sh", description="Execute bash command and returns the output, use this whenever you want to use a cli", type="command", parameters=[
         {"type": "str", "name":"command","description": "Command to Execute"}
     ])
 
-collection.insert_one(shell.model_dump(by_alias=True))
+tool_collection.insert(shell.model_dump(by_alias=True))
 
-logger.info(f"Inserted document: {collection.find_one({'name': 'bash sh'})}")
+logger.info(f"Inserted document: {tool_collection.find_one({'name': 'bash sh'})}")
 
 
 def find_tool_by_name(name: str, projection: dict = None) -> Tool:
-    return Tool.model_validate(collection.find_one({"name": name }, projection=projection))
+    return Tool.model_validate(tool_collection.find_one({"name": name }))
 
 def find_tools_by_name(names: list[str], projection: dict = None) -> list[Tool]:
     #valid projection {"name":1, "description":1, "parameters": 1}
-    toolsRaw = collection.find({"name": {"$in": names}}, projection=projection)
+    toolsRaw = tool_collection.find({"name": {"$in": names}})
     
     tools = []
     for tool in toolsRaw:

@@ -120,9 +120,11 @@ async def litellm_call(
                             continue                       
                         parsed_resp.done= False
                         res = await executeShell(chat, command)
+                        decoded_response = json.loads(res)
+
                         try:
-                            status_code, terminal_output = res.split(",", 1)  # Split into status code and the rest of the output
-                            status_code = int(status_code.strip().split(" ")[-1])  # Extract the numeric status code
+                            terminal_output = decoded_response.get("content")  # Split into status code and the rest of the output
+                            status_code = decoded_response.get("status_code")  # Extract the numeric status code
                         except (ValueError, IndexError) as e:
                             logger.error(f"Failed to parse status code from response: {res}. Error: {e}")
                             status_code = 0  # Default to an error status if parsing fails

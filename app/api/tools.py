@@ -9,7 +9,7 @@ from typing import Any
 import mongomock
 from app.services.auth import add_executioner, add_executioner, get_first_uuid_for_user,validate_token
 from app.services.tooldb import find_tool_by_name, find_tools_by_name
-from app.services.vectordb import find_toolname_by_query
+from app.services.toolvectordb import find_toolname_by_query
 from app.models.models import *
 from app.config import logger
 from dotenv import load_dotenv

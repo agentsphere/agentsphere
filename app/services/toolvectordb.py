@@ -1,36 +1,12 @@
-import os
 from typing import Any
-from pymilvus import MilvusClient
-import ollama
-import logging
-
-logger=logging.getLogger(__name__)
 from app.services.auth import get_current_user, get_user, validate_token
 from app.models.models import *
-from app.config import settings
-
-
-def emb_text(text):
-    response = ollama.embeddings(model="mxbai-embed-large", prompt=text)
-    return response["embedding"]
-
-client = MilvusClient(settings.MILVUSDBFILE)
+from app.config import logger, settings, embedder, query_collection
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel
 
 
-
-if client.has_collection(collection_name="tool_collection"):
-    logger.info("Dropping existing collection: tool_collection")
-    client.drop_collection(collection_name="tool_collection")
-
-logger.info("Creating new collection: tool_collection")
-client.create_collection(
-    collection_name="tool_collection",
-    auto_id=True,
-    dimension=1024,
-)
 
 toolQueries = [
     {"query": "lets setup a postgres", "tool": "bash sh"},
@@ -47,14 +23,12 @@ def addQuery(query):
             return
 
         logger.info(f"Generating embedding for query: {query.get('query')}")
-        vector = emb_text(query.get("query"))
+        vector = embedder.embed_text(query.get("query"))
 
         logger.info(f"Inserting query into collection: {query.get('query')} -> {query.get('tool')}")
-        client.insert(
-            collection_name="tool_collection",
-            data=[{"vector": vector, "text": query.get("query"), "tool": query.get("tool")}]
-        )
-        logger.info(f"Successfully added query: {query.get('query')} with tool: {query.get('tool')}")
+
+        query_collection.insert([{"vector": vector, "text": query.get("query"), "tool": query.get("tool")}])
+
     except Exception as e:
         logger.error(f"Error inserting query into Milvus: {e}")
 
@@ -82,13 +56,8 @@ def find_toolname_by_query(queries: list[str]):
     try:
         filtered = []
         logger.info("Starting vector search")
+        res = query_collection.query(vector=[embedder.embed_text(query) for query in queries])
         
-        res = client.search(
-            collection_name="tool_collection",
-            data=[emb_text(query) for query in queries],
-            limit=2,
-            output_fields=["text", "tool"],
-        )
         for r in res:
             for tool in r:
                 logger.debug(f"Search result: {tool}")

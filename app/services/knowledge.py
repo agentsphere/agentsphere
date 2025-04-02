@@ -17,49 +17,37 @@ from markdownify import markdownify as md
 from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium_stealth import stealth
+from webdriver_manager.chrome import ChromeDriverManager
 
-from app.config import settings, tzinfo, logger
+from app.config import settings, tzinfo, logger, knowledge_collection, embedder, repo_collection, knowledge_collection, query_collection, config_collection, web_search_cache_collection, get_knowledge_cache_collection
+
 from duckduckgo_search import DDGS
 from fp.fp import FreeProxy
 
-BLACKLIST=["geeksforgeeks.org", "youtube.com"]
-import mongomock
-# Use an in-memory MongoDB mock
-client = mongomock.MongoClient()
-db = client["knowledgedb"]
-collection = db["knowledge"]
-
-DOCLIMIT=25000
-
-def get_free_proxy():
-    proxy = FreeProxy().get()
-    return proxy
-
-
-def emb_text(text):
-    response = ollama.embeddings(model="mxbai-embed-large", prompt=text)
-    return response["embedding"]
-
-vector = MilvusClient(settings.MILVUSDBFILE)
-if vector.has_collection(collection_name="knowledge"):
-    logger.info("Dropping existing collection:knowledge")
-    vector.drop_collection(collection_name="knowledge")
-
-if not vector.has_collection(collection_name="knowledge"):
-    logger.info("creating new collection: knowledge")
-    vector.create_collection(
-        collection_name="knowledge",
-        auto_id=True,
-        dimension=1024,
-    )
 
 import requests
 from bs4 import BeautifulSoup
 
-url = "https://google.serper.dev/search"
+blacklist_entry = config_collection.find_one({"KEY": "BLACKLIST_SEARCH"})
+BLACKLIST = blacklist_entry.get("urls", None) if blacklist_entry else settings.BLACKLIST_SEARCH
+
+main_content_entry = config_collection.find_one({"KEY": "MAIN_CONTENT_SELECTOR"})
+MAIN_CONTENT_SELECTORS = main_content_entry.get("selectors", []) if main_content_entry else []
+
+WEBSEARCH_URL = settings.WEBSEARCH_URL
+DOC_LIMIT=settings.DOC_LIMIT
+PAGE_LIMIT=settings.PAGE_LIMIT
+
+def get_free_proxy():
+    proxy = FreeProxy().get()
 
 
-shortTermWebSearchCache={}
+collection = knowledge_collection
+
 
 def clean_url(url: str) -> str:
     """
@@ -77,8 +65,10 @@ def clean_url(url: str) -> str:
     return cleaned_url
 
 def perform_web_search(query):
-    if query in shortTermWebSearchCache:
-        return shortTermWebSearchCache[query]
+    res = web_search_cache_collection.find_one({"query": query})["urls"] or []
+    if res:
+        logger.info(f"Found {query} in cache")
+        return res
     payload = json.dumps({
         "q": f"{query}"
     })
@@ -87,7 +77,7 @@ def perform_web_search(query):
     'Content-Type': 'application/json'
     }
 
-    response = requests.request("POST", url, headers=headers, data=payload)
+    response = requests.request("POST", WEBSEARCH_URL, headers=headers, data=payload)
     data = response.json()
 
     # Now extract links from 'organic' results
@@ -99,40 +89,8 @@ def perform_web_search(query):
             all_links.append(clean_url(sitelink.get("link")))
 
     logger.info(all_links)
-    shortTermWebSearchCache[query] = all_links
+    web_search_cache_collection.insert_one({"query": query, "urls": all_links})
     return list(set(all_links))
-
-def perform_web_searchDDGS(query, max_results=10):
-    """Perform a web search using DuckDuckGo and return a list of URLs."""
-    logger.info(f"Performing web search for: {query}")
-    urls = []
-    tries=0
-    while tries<5:
-        tries+=1
-        try:
-            proxy=get_free_proxy()
-            proxies={"http": proxy, "https": proxy}
-            with DDGS() as ddgs:
-                for result in ddgs.text(query, max_results=max_results):
-                    url = result["href"]  # Extract the URL from the result
-                    if not any(blacklisted in url for blacklisted in BLACKLIST):  # Exclude blacklisted URLs
-                        urls.append(url)
-                    else:
-                        logger.info(f"URL on blacklist: {url}")
-
-            
-            logger.info(f"urls: {urls}")
-            return list(set(urls))
-        except Exception as e:
-            logger.error(f"Error performing web search: {e}")
-        
-    logger.error(f"Failed to perform web search after {tries} attempts.")
-    return urls
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium_stealth import stealth
-from webdriver_manager.chrome import ChromeDriverManager
 
 
 def create_stealth_driver():
@@ -235,7 +193,7 @@ def concatenate_strings(lst, max_char):
 def split(doc):
     
     le=len(doc.get_text(strip=True))
-    if le > DOCLIMIT:
+    if le > DOC_LIMIT:
         splits=[]
         logger.info(f"break {le}")
         splitsTags= ["h1", "h2", "h3", "h4"]
@@ -263,7 +221,7 @@ def split(doc):
                         #print(f"Section {i} (Before first <h2>):\n{pre_tag.strip()[0:100]}\n{'-'*40}")
                         s = BeautifulSoup(pre_tag.strip(), 'html.parser')
                         text = s.get_text(strip=True, separator="\n")
-                        if len(text)>DOCLIMIT:
+                        if len(text)>DOC_LIMIT:
                             new_splits = split(s)   # new_splits is a list
                             splits.extend(new_splits)  
                         else:
@@ -274,7 +232,7 @@ def split(doc):
 
                         #print(f"Section {i} (Heading and Content):\n{tagC.strip()[0:100]}\n{content.strip()[0:100]}\n{'-'*40}")
                         s = BeautifulSoup(tagC + content, 'html.parser')
-                        if len(s.get_text(strip=True))>DOCLIMIT:
+                        if len(s.get_text(strip=True))>DOC_LIMIT:
                             new_splits = split(s)   # new_splits is a list
                             splits.extend(new_splits)  
                         else:
@@ -282,16 +240,13 @@ def split(doc):
                             logger.info(do)
                             splits.append(do)
         [logger.info(len(s)) for s in splits]
-        n = concatenate_strings(splits, DOCLIMIT)
+        n = concatenate_strings(splits, DOC_LIMIT)
 
         [logger.info(f"{len(s)}" ) for s in n]
         return n
     else:
         # dont need to be split
         return [md(str(doc))]
-
-
-mainContentSelectors={"https://cloud.google.com/": ".devsite-article", "https://stackoverflow.com/questions": ".inner-content", "": "#provider-doc", "https://www.reddit.com/r/" :".main-content""}
 
 def getDocsFromHTML(html, url):
     if html is None or html == "":
@@ -300,11 +255,17 @@ def getDocsFromHTML(html, url):
     soup = BeautifulSoup(html, 'html.parser')
 
     matched_selector = None
+    longest_match_length = 0
 
-    for prefix, selector in mainContentSelectors.items():
-        if url.startswith(prefix):
+    for entry in MAIN_CONTENT_SELECTORS:
+        prefix = entry.get("url", "")
+        selector = entry.get("selector", "")
+
+        # Check if the URL starts with the prefix and if it's the longest match so far
+        if url.startswith(prefix) and len(prefix) > longest_match_length:
             matched_selector = selector
-            break
+            longest_match_length = len(prefix)
+
 
     if matched_selector:
         logger.info(f"Matched selector: {matched_selector}")
@@ -313,7 +274,7 @@ def getDocsFromHTML(html, url):
             extracted_html = str(main_content)
             soup = BeautifulSoup(extracted_html, 'html.parser')
             le=len(soup.get_text(strip=True))
-            if le > DOCLIMIT:
+            if le > DOC_LIMIT:
                 logger.info(f"Doc larger than max size need to chunk it {le}")
                 return split(soup)
             else:
@@ -324,7 +285,7 @@ def getDocsFromHTML(html, url):
     else:
     
         total_length = len(soup.get_text(strip=True))
-        if total_length > 150000:
+        if total_length > PAGE_LIMIT:
             logger.warning("Website text larger than max size, propably junk skip and add to blacklist {url}")
             BLACKLIST.append(url)
             return None
@@ -347,7 +308,7 @@ def getDocsFromHTML(html, url):
         # Get the main text element which is closest to 80% of the total text length, no heading, footer, etc.
         _, main = min(text_length_per_parent.items(), key=lambda x: abs(x[0] - 0.8))
         le=len(main.get_text(strip=True))
-        if le > DOCLIMIT:
+        if le > DOC_LIMIT:
             logger.info(f"Doc larger than max size need to chunk it {le}")
             return split(main)
         else:
@@ -355,11 +316,11 @@ def getDocsFromHTML(html, url):
             return [md(str(main))]
    
 def delete_vector_with_condition(condition: str):
-    vector.delete(collection_name="knowledge", filter=condition)
+    query_collection.delete(filter=condition)
 
    
 def delete_vector_entries(ids: list[str]):
-    vector.delete(collection_name="knowledge", ids=ids)
+    query_collection.delete({"ids":ids})
 
 
 def remove_entries_by_doc_ids(ids: list, url: str):
@@ -390,13 +351,10 @@ def addQuery(query):
             return
 
         logger.info(f"Generating embedding for query: {query.get('query')}")
-        emb = emb_text(query.get("query"))
+        emb = embedder.embed_text(query.get("query"))
 
         logger.info(f"Inserting query into collection: {query.get('query')} -> {query.get('doc_id')}")
-        vector.insert(
-            collection_name="knowledge",
-            data=[{"vector": emb, "query": query.get("query"), "doc_id": query.get("doc_id"), "id": str(uuid.uuid4())}],
-        )
+        query_collection.insert([{"vector": emb, "query": query.get("query"), "doc_id": query.get("doc_id"), "id": str(uuid.uuid4())}])
         logger.info(f"Successfully added query: {query.get('query')} with doc: {query.get('doc_id')}")
     except Exception as e:
         logger.error(f"Error inserting query into Milvus: {e}")
@@ -452,11 +410,9 @@ def update_knowledge(url: str):
 
 def searchVector(query):
     logger.info(f"Searching vector for: {query}")
-    resultsList = vector.search(
-        collection_name="knowledge",
-        data=[emb_text(query)],
-        limit=40,
-        output_fields=["query", "doc_id","id"],
+    resultsList = query_collection.query_text(query
+        #limit=40,
+        #output_fields=["query", "doc_id","id"],
     )
 
 
@@ -611,3 +567,28 @@ async def getKnowledge(query: str, chat: Chat, preText: bool = True):
 
     
     return knowledge
+
+
+
+"""
+
+
+#vector = MilvusClient(settings.MILVUSDBFILE)
+#if vector.has_collection(collection_name="knowledge"):
+#    logger.info("Dropping existing collection:knowledge")
+#    vector.drop_collection(collection_name="knowledge")#
+
+#if not vector.has_collection(collection_name="knowledge"):
+#    logger.info("creating new collection: knowledge")
+#    vector.create_collection(
+#        collection_name="knowledge",
+#        auto_id=True,
+#        dimension=1024,
+#    )
+
+def emb_text(text):
+    response = ollama.embeddings(model="mxbai-embed-large", prompt=text)
+    return response["embedding"]"
+
+    
+"""
