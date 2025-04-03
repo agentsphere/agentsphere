@@ -1,10 +1,8 @@
-from app.config import logger, settings
-from app.services.object_store.ObjectStoreInterface import ObjectStoreInterface
-
-
 from bson.objectid import ObjectId
 from pymongo import MongoClient
 
+from app.config import logger, settings
+from app.services.object_store.object_store import ObjectStoreInterface
 
 class MongoStore(ObjectStoreInterface):
     def __init__(self, collection: str):
@@ -23,13 +21,13 @@ class MongoStore(ObjectStoreInterface):
             raise
 
     def find_one(self, query: dict, collection: str = None) -> dict:
-        logger.debug(f"Finding one document in collection '{collection}' with query: {query}")
+        logger.debug("Finding one document in collection '%s' with query: %s", collection, query)
         collection = collection or self.collection
         try:
             result = self.db[collection].find_one(query)
             if result:
                 result["_id"] = str(result["_id"])
-                logger.info(f"Document found in collection '{collection}': {result['_id']}")
+                logger.info("Document found in collection '%s': %s", collection, result["_id"])
             else:
                 logger.info(f"No document found in collection '{collection}' with query: {query}")
             return result

@@ -1,18 +1,16 @@
 import asyncio
 import os
-from fastapi import Depends, Query, WebSocket, WebSocketDisconnect, APIRouter
+
+from fastapi import Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from typing import Any, Dict
-from app.models.models import Chat
-from app.services.auth import check_executioner, check_executioner_uuid_for_user, get_current_user, get_uuid, validate_token
-from app.models.models import *
+from app.models.models import Chat, ExecutionRequest
+from app.services.auth import check_executioner, check_executioner_uuid_for_user, get_uuid
+
 from app.config import logger
 from app.services.auth import fake_executioner_clientId
 
 # A structure to store user -> websocket mapping
-connected_receivers: Dict[str, WebSocket] = {}
-
+connected_receivers: dict[str, WebSocket] = {}
 
 
 async def add_connection(websocket: WebSocket, token: str = Query(...)):
@@ -20,112 +18,103 @@ async def add_connection(websocket: WebSocket, token: str = Query(...)):
     check_token = check_executioner(token)
     uuid = get_uuid(token=token)
     if not check_token or not uuid:
-        websocket.close(code=1008) 
+        websocket.close(code=1008)
         return  # Connection closed
     await websocket.accept()
-    
-    logger.info(f"Receiver connected wiht uuid {uuid}")
+
+    logger.info("Receiver connected wiht uuid %s", uuid)
 
     connected_receivers[uuid] = websocket
 
     try:
         while True:
             await asyncio.sleep(1)
-    except Exception as e:
-        logger.error(f"Error in WebSocket connection: {e}")
     except WebSocketDisconnect:
-        logger.warning(f"Receiver disconnected: {uuid}")
+        logger.warning("Receiver disconnected: %s", uuid)
         if uuid in connected_receivers:
             del connected_receivers[uuid]
+    except asyncio.CancelledError as e:
+        logger.error("WebSocket connection cancelled: %s", e)
+    except RuntimeError as e:
+        logger.error("Runtime error in WebSocket connection: %s", e)
 
 
-async def executeShell(chat: Chat, command: str):
+async def execute_shell(chat: Chat, command: str):
     """Executes a shell command and returns the output."""
     try:
-        logger.info(f"Executing shell command: {command}")
+        logger.info("Executing shell command: %s", command)
         await chat.set_message(f"Executing shell command: {command} \n\n")
         ws = connected_receivers.get(chat.user.id)
         if ws is None or not isinstance(ws, WebSocket):
-            logger.warning(f"No valid WebSocket found for uuid {chat.user.id}")
+            logger.warning("No valid WebSocket found for uuid %s", chat.user.id)
             return JSONResponse(status_code=404, content={"error": "No receiver found for the provided token"})
 
         await ws.send_text("COMMAND")
         cmd = command
         if cmd:
-            logger.info(f"sending command {cmd}")
+            logger.info("sending command %s", cmd)
             await ws.send_text(f"{cmd}")
 
             try:
                 response = await ws.receive_text()
-                logger.info(f"Client response: {response}")
+                logger.info("Client response: %s", response)
                 return response
-            except Exception as recv_error:
-                logger.error(f"Error receiving response from client: {recv_error}")
+            except (WebSocketDisconnect, RuntimeError) as recv_error:
+                logger.error("Error receiving response from client: %s", recv_error)
                 return JSONResponse(status_code=500, content={"error": "No acknowledgment from client"})
         else:
-            logger.info("no command found")
-    
-    except Exception as e:
-        logger.error(f"Error executing shell command: {e}")
+            pass  # Add appropriate handling here if needed
+    except (OSError, ValueError) as e:
+        logger.error("Error executing shell command: %s", e)
         return f"Error executing command: {e}"
 
-async def send_execution_file(requestRaw: ExecutionRequest):
+async def send_execution_file(request_raw: ExecutionRequest):
     """
     Sends an executable file to the receiver with parameters.
     """
     try:
-        logger.info(f"Start sendandexecute request: {requestRaw}")
-        if requestRaw.uuid is None:
-            requestRaw.uuid = fake_executioner_clientId[requestRaw.user.id][0]
-        check_executioner_uuid_for_user(user=requestRaw.user.id, uuid=requestRaw.uuid)
+        logger.info("Start sendandexecute request: %s", request_raw)
+        if request_raw.uuid is None:
+            request_raw.uuid = fake_executioner_clientId[request_raw.user.id][0]
+        check_executioner_uuid_for_user(user=request_raw.user.id, uuid=request_raw.uuid)
 
         # Validate receiver
-        ws = connected_receivers.get(requestRaw.uuid)
+        ws = connected_receivers.get(request_raw.uuid)
         if ws is None or not isinstance(ws, WebSocket):
-            logger.warning(f"No valid WebSocket found for uuid {requestRaw.uuid}")
+            logger.warning("No valid WebSocket found for uuid %s", request_raw.uuid)
             return JSONResponse(status_code=404, content={"error": "No receiver found for the provided token"})
 
-        if requestRaw.tool.type == "file":
+        if request_raw.tool.type == "file":
             # Validate file existence
-            if not os.path.isfile(requestRaw.file):
-                logger.error(f"File not found: {requestRaw.file}")
-                return JSONResponse(status_code=400, content={"error": f"File not found: {requestRaw.file}"})
+            if not os.path.isfile(request_raw.file):
+                logger.error("File not found: %s", request_raw.file)
+                return JSONResponse(status_code=400, content={"error": f"File not found: {request_raw.file}"})
 
-            file_name = os.path.basename(requestRaw.file)
-            logger.info(f"Sending filename: {file_name}")
+            file_name = os.path.basename(request_raw.file)
+            logger.info("Sending filename: %s", file_name)
             await ws.send_text("FILE")
             await ws.send_text(file_name)
 
             # Send file content in chunks
             try:
-                with open(requestRaw.file, "rb") as f:
+                with open(request_raw.file, "rb") as f:
                     while chunk := f.read(1024):  # Read in 1KB chunks
                         await ws.send_bytes(chunk)
-            except Exception as file_error:
-                logger.error(f"Error reading file {requestRaw.file}: {file_error}")
+            except (OSError, IOError) as file_error:
+                logger.error("Error reading file %s: %s", request_raw.file, file_error)
                 return JSONResponse(status_code=500, content={"error": "Error reading file"})
 
             # Send EOF signal
             await ws.send_bytes(b"EOF")
             logger.info("EOF signal sent")
-        elif requestRaw.tool.type == "command":
-            await ws.send_text("COMMAND")
-            cmd = requestRaw.params.get("command", None)
-            if cmd:
-                logger.info(f"sending command {cmd}")
-                await ws.send_text(f"{cmd}")
-            else:
-                logger.info("no command found")
-        
+
         # Wait for acknowledgment from the client
         try:
             response = await ws.receive_text()
-            logger.info(f"Client response: {response}")
+            logger.info("Client response: %s", response)
             return response
-        except Exception as recv_error:
-            logger.error(f"Error receiving response from client: {recv_error}")
-            return JSONResponse(status_code=500, content={"error": "No acknowledgment from client"})
-
-    except Exception as e:
-        logger.error(f"Unexpected error in sendandexecute: {e}")
+        except (WebSocketDisconnect, RuntimeError) as recv_error:
+            logger.error("Error receiving response from client: %s", recv_error)
+    except (OSError, ValueError, KeyError) as e:
+        logger.error("Unexpected error in sendandexecute: %s", e)
         raise e

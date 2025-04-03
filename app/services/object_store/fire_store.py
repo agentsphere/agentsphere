@@ -1,6 +1,9 @@
-from app.config import logger, settings
-from app.services.object_store.ObjectStoreInterface import ObjectStoreInterface
+
 from google.cloud import firestore
+from google.oauth2 import service_account
+
+from app.config import logger, settings
+from app.services.object_store.object_store import ObjectStoreInterface
 
 
 class FirestoreDB(ObjectStoreInterface):
@@ -15,7 +18,6 @@ class FirestoreDB(ObjectStoreInterface):
         """Initialize Firestore client."""
         if not hasattr(self, "_initialized"):
             logger.info("Initializing FirestoreDB")
-            from google.oauth2 import service_account
 
             creds = service_account.Credentials.from_service_account_file(settings.GOOGLE_APPLICATION_CREDENTIALS)
             self.db = firestore.Client(
@@ -62,8 +64,9 @@ class FirestoreDB(ObjectStoreInterface):
         collection = collection or self.collection
         try:
             doc_ref = self.db.collection(collection).add(document)
+            logger.info(f"Document inserted into collection '{collection}': {doc_ref}")
             logger.info(f"Document inserted into collection '{collection}' with ID: {doc_ref[1].id}")
-            return {"success": True, "document_id": doc_ref[1].id}
+            return {"success": True, "id": doc_ref[1].id}
         except Exception as e:
             logger.error(f"Error inserting document into collection '{collection}': {e}")
             raise

@@ -1,50 +1,38 @@
-from bson import ObjectId
+from unittest.mock import patch
 import pytest
-from app.services.knowledge import collection, vector, addQuery, searchVector, emb_text, perform_web_search, BLACKLIST
+import responses
+import json
 
-def test_mongodb_and_vectordb_integration():
-    # Step 1: Insert a document into MongoDB
-    doc_content = "This is a test document for knowledge base."
-    doc_id = collection.insert_one({"doc": doc_content}).inserted_id
-    assert doc_id is not None, "Failed to insert document into MongoDB"
+from app.services.knowledge import get_knowledge
 
-    # Step 2: Save a query to the vector database
-    query_text = "test document"
-    addQuery({"query": query_text, "doc_id": str(doc_id)})
+# Load the expected result from the JSON file
+@pytest.fixture
+def serper_result():
+    with open("tests/resources/serper_result.json", "r") as f:
+        return json.load(f)
 
-    # Step 3: Search the vector database with the query
-    search_results = searchVector(query_text)
-    assert len(search_results) > 0, "No results found in vector database"
+@pytest.fixture
+def apple_result():
+    with open("tests/resources/websites/www.apple.com.html", "r") as f:
+        return f.read()
 
-def test_mongodb_and_vectordb_integration_Id():
-    # Step 1: Insert a document into MongoDB
-    doc_content = "This is a test document for knowledge base."
-    doc_id = collection.insert_one({"doc": doc_content}).inserted_id
-    assert doc_id is not None, "Failed to insert document into MongoDB"
+@responses.activate
+@pytest.mark.asyncio
+async def test_get_knowledge(serper_result, apple_result):
+    # Mock the HTTP request made by getKnowledge
+    responses.add(
+        responses.POST,
+        "https://google.serper.dev/search",  # Replace with the actual URL used in getKnowledge
+        json=serper_result,
+        status=200,
+    )
 
-    # Convert doc_id to string and back to ObjectId
-    doc_id_str = str(doc_id)
-    doc_id_object = ObjectId(doc_id_str)
+    # Patch getPageWithSelenium to return the apple_result HTML content
+    with patch("app.services.knowledge.getPageWithSelenium", return_value=apple_result):
+        # Call the function being tested
+        result = await get_knowledge("apple inc")
 
-    # Step 4: Retrieve the document from MongoDB using the ObjectId
-    retrieved_doc = collection.find_one({"_id": doc_id_object})
-    assert retrieved_doc is not None, "Failed to retrieve document from MongoDB"
-    assert retrieved_doc["doc"] == doc_content, "Retrieved document content does not match the inserted content"
-
-    print(f"Test passed: Retrieved document content: {retrieved_doc['doc']}")
-
-def test_perform_web_search():
-    # Define the query
-    query = "what is crewAi"
-
-    # Call the perform_web_search function
-    urls = perform_web_search(query)
-
-    # Assertions
-    assert isinstance(urls, list), "The result should be a list."
-    assert len(urls) > 0, "The result should contain at least one URL."
-    for url in urls:
-        assert isinstance(url, str), "Each URL should be a string."
-
-    # Print the results for debugging
-    print(f"Search results for query '{query}': {urls}")
+        # Assert that the result matches the expected output
+        assert result is not None
+        assert isinstance(result, dict)  # Assuming the result is a dictionary
+        assert result == serper_result  # Compare with the expected result

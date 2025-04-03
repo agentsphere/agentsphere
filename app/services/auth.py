@@ -1,52 +1,42 @@
-
-from app.models.models import User
-import os
-import requests
-
-from fastapi import HTTPException, Header, Depends, status
 from datetime import datetime, timedelta
 from typing import Optional
+import requests
+from fastapi import HTTPException, Header, Depends, status
+from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
-from pydantic import BaseModel, Field
 
-import logging
-logger= logging.getLogger(__name__)
+from app.models.models import User
+from app.config import settings, logger
 
-SECRET_KEY = "hhasdisadc2As2189dD"  # Change this to a secure random key
+SECRET_KEY = settings.AUTH_SECRET
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440000
-
+INTROSPECTION_URL = settings.INTROSPECTION_URL
 
 def introspect_token(token: str) -> dict:
-    if token is None: 
-       raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token introspection failed"
-        ) 
-    ctoken = token.split(" ", 1)[1] if token.startswith("Bearer ") else token
-    introspection_url = "https://auth.agentsphere.cloud/realms/agentsphere/protocol/openid-connect/token/introspect"
-
-    client_id = os.getenv("CLIENT")
-    client_secret = os.getenv("CLIENT_SECRET")
-
-    logger.debug(f"id {client_id} sec {client_secret}")
-    response = requests.post(
-        introspection_url,
-        headers={"Content-Type":"application/x-www-form-urlencoded"},
-        data={"token": ctoken, "client_id": client_id, "client_secret": client_secret}
-    )
-    if response.status_code == 200:
-        return response.json()
-    else:
+    if token is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token introspection failed"
         )
+    ctoken = token.split(" ", 1)[1] if token.startswith("Bearer ") else token
+    client_id = settings.CLIENT
+    client_secret = settings.CLIENT_SECRET
 
-
-
+    response = requests.post(
+        timeout=10,
+        url = INTROSPECTION_URL,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        data={"token": ctoken, "client_id": client_id, "client_secret": client_secret}
+    )
+    if response.status_code == 200:
+        return response.json()
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Token introspection failed"
+    )
 
 
 def get_user_headers(
@@ -70,15 +60,9 @@ def get_user(user_headers: dict = Depends(get_user_headers)):
     return User(**user_headers)
 
 def validate_token(token_header: dict = Depends(get_user_headers)):
+    logger.debug("token_header %s", token_header)
     introspect_token(token_header.get("token", None))
-    return
-
-
-
-def get_user(user_headers: dict = Depends(get_user_headers)):
-    introspect_token(user_headers.get("token", None))
-    return User(**user_headers)
-
+    return True
 # Password hashing utility
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -101,9 +85,7 @@ def verify_access_token(token: str):
         return payload  # Returns user data if token is valid
     except JWTError:
         return None
-    
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
@@ -117,17 +99,6 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     return payload  # This returns the user data from the token
 
-
-
-
-
-# Dummy user database
-fake_users_db = {
-    "testuser": {
-        "username": "testuser",
-        "password": hash_password("password123"),  # Hashed password
-    }
-}
 
 fake_executioner_clientId = {}
 
@@ -150,17 +121,16 @@ def add_executioner(uuid: str, user_id: str):
 def check_executioner_uuid_for_user(user, uuid):
     if not uuid in fake_executioner_clientId[user]:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Executioner {token} doesn't belong to User {user}" )
-    return
 
 def check_executioner(token):
     user = get_current_user_none(token)
     if user is None:
         logger.debug("user not found")
         return False
-    
+
     if fake_executioner_clientId.get(user["user_id"], None) is None:
-       fake_executioner_clientId[user["user_id"]] = []
-    
+        fake_executioner_clientId[user["user_id"]] = []
+
     if user["uuid"] not in fake_executioner_clientId[user["user_id"]]:
 
         fake_executioner_clientId[user["user_id"]].append(user["uuid"])
@@ -169,13 +139,10 @@ def check_executioner(token):
         #return False
 
     return True
- 
+
 def get_uuid(token):
     user = get_current_user_none(token)
     if user is None:
         logger.debug("user not found")
         return None
     return user.get("uuid", None) 
-
-
-

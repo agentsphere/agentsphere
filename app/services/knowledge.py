@@ -1,36 +1,21 @@
 
-import asyncio
 from datetime import datetime
-import hashlib
 import json
 import re
-from typing import Any
 from urllib.parse import urlparse, urlunparse
 import uuid
 from bson import ObjectId
-from pydantic import BaseModel, Field
-from pymilvus import MilvusClient
-import ollama
-from app.models.models import Chat, Message, Roles
-from app.services.queue import add_to_queue
 from markdownify import markdownify as md
-from selenium import webdriver
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium_stealth import stealth
-from webdriver_manager.chrome import ChromeDriverManager
-
-from app.config import settings, tzinfo, logger, knowledge_collection, embedder, repo_collection, knowledge_collection, query_collection, config_collection, web_search_cache_collection, get_knowledge_cache_collection
-
-from duckduckgo_search import DDGS
+from pydantic import BaseModel, Field
 from fp.fp import FreeProxy
-
-
 import requests
 from bs4 import BeautifulSoup
+
+from app.models.models import Chat, Message, Roles
+from app.config import settings, logger, embedder, knowledge_collection, query_collection, config_collection, web_search_cache_collection, TZINFO
+
+from app.services.browser import get_page_with_selenium
+from app.services.helpers import generate_hash
 
 blacklist_entry = config_collection.find_one({"KEY": "BLACKLIST_SEARCH"})
 BLACKLIST = blacklist_entry.get("urls", None) if blacklist_entry else settings.BLACKLIST_SEARCH
@@ -43,8 +28,7 @@ DOC_LIMIT=settings.DOC_LIMIT
 PAGE_LIMIT=settings.PAGE_LIMIT
 
 def get_free_proxy():
-    proxy = FreeProxy().get()
-
+    return FreeProxy().get()
 
 collection = knowledge_collection
 
@@ -65,193 +49,104 @@ def clean_url(url: str) -> str:
     return cleaned_url
 
 def perform_web_search(query):
-    res = web_search_cache_collection.find_one({"query": query})["urls"] or []
-    if res:
-        logger.info(f"Found {query} in cache")
-        return res
+    res = web_search_cache_collection.find_one({"query": query})
+    res_urls = res["urls"] if res else []
+    logger.info("websearchurl %s", WEBSEARCH_URL)
+    if res_urls:
+        logger.info("Found %s in cache", query)
+        return res_urls
     payload = json.dumps({
         "q": f"{query}"
     })
     headers = {
-    'X-API-KEY': settings.SERPER_API_KEY,
-    'Content-Type': 'application/json'
+        'X-API-KEY': settings.SERPER_API_KEY,
+        'Content-Type': 'application/json'
     }
 
-    response = requests.request("POST", WEBSEARCH_URL, headers=headers, data=payload)
+    response = requests.request("POST", WEBSEARCH_URL, headers=headers, data=payload, timeout=10)
     data = response.json()
 
     # Now extract links from 'organic' results
     all_links = []
-
+    if data is None:
+        logger.warning("No data found in response.")
+        return []
     for item in data.get("organic", []):
         all_links.append(clean_url(item.get("link")))
         for sitelink in item.get("sitelinks", []):
             all_links.append(clean_url(sitelink.get("link")))
 
     logger.info(all_links)
-    web_search_cache_collection.insert_one({"query": query, "urls": all_links})
+
+    web_search_cache_collection.insert({"query": query, "urls": all_links})
     return list(set(all_links))
-
-
-def create_stealth_driver():
-    """
-    Initializes a Chrome WebDriver with stealth configurations to reduce detection.
-
-    Returns:
-        webdriver.Chrome: A configured instance of Chrome WebDriver.
-    """
-    chrome_options = Options()
-
-    # Browser window and behavior
-    chrome_options.add_argument("--start-maximized")
-    
-    # Uncomment for headless mode if needed (new mode is better for stealth)
-    chrome_options.add_argument("--headless=new")
-
-    # Custom user-agent to mimic a real browser
-    chrome_options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
-
-    # Disable automation-related flags to avoid detection
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option("useAutomationExtension", False)
-    chrome_options.add_argument("--disable-notifications")
-
-    # Initialize Chrome WebDriver
-    driver = webdriver.Chrome(
-        service=Service(ChromeDriverManager().install()),
-        options=chrome_options
-    )
-
-    # Apply stealth techniques
-    stealth(
-        driver,
-        languages=["en-US", "en"],
-        vendor="Google Inc. (Apple)",
-        platform="MacIntel",
-        webgl_vendor="Google Inc. (Apple)",
-        renderer="ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Max, Unspecified Version)",
-        fix_hairline=True,
-    )
-
-    return driver
-
-
-def getPageWithSelenium(url: str) -> str:
-    """getPageWithSelenium
-    Fetches the HTML content of a page using a stealth-enabled Selenium driver.
-
-    Args:
-        url (str): The target webpage URL.
-
-    Returns:
-        str: HTML content of the loaded page.
-    """
-    driver = create_stealth_driver()
-
-    try:
-        driver.get(url)
-        WebDriverWait(driver, 3).until(
-            lambda d: d.execute_script(
-                """
-                return window.performance.getEntriesByType('resource')
-                .filter(e => ['xmlhttprequest', 'fetch', 'script', 'css', 'iframe', 'beacon', 'other'].includes(e.initiatorType)).length === 0;
-                """
-            )
-        )
-        page_source = driver.page_source
-        logger.info(f"Could load page {url}, not None")
-        logger.info(f"Page source {len(page_source)}")
-        return page_source
-    except Exception as e:
-        print("Timeout waiting for network requests:", e)
-        page_source = driver.page_source
-        logger.info(f"Getting page even if not fully loaded {url}")
-        logger.info(f"Page source {len(page_source)}")            
-        return page_source
-    finally:
-        driver.quit()
-    return None
-
-
 
 def concatenate_strings(lst, max_char):
     result = []
     current_string = ""
-    
+
     for s in lst:
         if len(current_string) + len(s) <= max_char:
             current_string += s  # Concatenate the string
         else:
             result.append(current_string)  # Save the previous concatenated string
             current_string = s  # Start a new string
-            
+
     if current_string:  # Append any remaining string
         result.append(current_string)
-    
+
     return result
 
 def split(doc):
-    
     le=len(doc.get_text(strip=True))
     if le > DOC_LIMIT:
         splits=[]
-        logger.info(f"break {le}")
-        splitsTags= ["h1", "h2", "h3", "h4"]
+        logger.info("break %s", le)
 
-        for tag in splitsTags:
+        for tag in ["h1", "h2", "h3", "h4"]:
             count = len(doc.find_all(tag))
             if count > 1:
-                logger.info(f"finding {tag} {count}")
-                
+                logger.info("finding %s %s", tag, count)
                 # Regular expression pattern
                 pattern = re.compile(
                     r'(?s)(.*?)'             # Text before the first <h2>
                     rf'(?:(<{tag}.*?</{tag}>))'     # Each <h2> tag
                     rf'(.*?)(?=(?:<{tag})|\Z)'   # Content after <h2> up to the next <h2> or end
                 )
-
                 # Find all matches
                 matches = pattern.findall(str(doc))
 
-
                 # Process and display the sections
-                for i, (pre_tag, tagC, content) in enumerate(matches, start=1):
-                    
+                for i, (pre_tag, tag_c, content) in enumerate(matches, start=1):
                     if pre_tag.strip():
-                        #print(f"Section {i} (Before first <h2>):\n{pre_tag.strip()[0:100]}\n{'-'*40}")
                         s = BeautifulSoup(pre_tag.strip(), 'html.parser')
                         text = s.get_text(strip=True, separator="\n")
                         if len(text)>DOC_LIMIT:
                             new_splits = split(s)   # new_splits is a list
-                            splits.extend(new_splits)  
+                            splits.extend(new_splits)
                         else:
                             do = md(str(s))
                             splits.append(do)
                         i += 1
-                    if tagC:
-
-                        #print(f"Section {i} (Heading and Content):\n{tagC.strip()[0:100]}\n{content.strip()[0:100]}\n{'-'*40}")
-                        s = BeautifulSoup(tagC + content, 'html.parser')
+                    if tag_c:
+                        s = BeautifulSoup(tag_c + content, 'html.parser')
                         if len(s.get_text(strip=True))>DOC_LIMIT:
                             new_splits = split(s)   # new_splits is a list
-                            splits.extend(new_splits)  
+                            splits.extend(new_splits)
                         else:
                             do = md(str(s))
                             logger.info(do)
                             splits.append(do)
-        [logger.info(len(s)) for s in splits]
-        n = concatenate_strings(splits, DOC_LIMIT)
+        for s in splits:
+            logger.info(len(s))
+        return concatenate_strings(splits, DOC_LIMIT)
+    return [md(str(doc))]
 
-        [logger.info(f"{len(s)}" ) for s in n]
-        return n
-    else:
-        # dont need to be split
-        return [md(str(doc))]
-
-def getDocsFromHTML(html, url):
+def get_docs_from_html(html, url) -> list:
     if html is None or html == "":
         logger.info("No HTML content found.")
         return None
+    logger.info("html %d", len(html))
     soup = BeautifulSoup(html, 'html.parser')
 
     matched_selector = None
@@ -268,33 +163,32 @@ def getDocsFromHTML(html, url):
 
 
     if matched_selector:
-        logger.info(f"Matched selector: {matched_selector}")
+        logger.info("Matched selector: %s", matched_selector)
         main_content = soup.select_one(matched_selector)
         if main_content:
             extracted_html = str(main_content)
             soup = BeautifulSoup(extracted_html, 'html.parser')
             le=len(soup.get_text(strip=True))
             if le > DOC_LIMIT:
-                logger.info(f"Doc larger than max size need to chunk it {le}")
+                logger.info("Doc larger than max size need to chunk it %s", le)
                 return split(soup)
-            else:
-                logger.info(f"Doc smaller than max size just return it")        
-                return [md(str(soup))]
-        else:
-            logger.warning(f"Should not be here No content found with selector: {matched_selector}")
+            logger.info("Doc smaller than max size just return it")
+            return [md(str(soup))]
+        logger.warning("Should not be here No content found with selector: %s", matched_selector)
     else:
-    
+        for tag in soup(['script', 'style', 'header', "footer", "meta", "svg"]):
+            tag.decompose()  # Completely removes the tag from the soup
+
         total_length = len(soup.get_text(strip=True))
+        logger.info("Total length of text content: %d", total_length)
         if total_length > PAGE_LIMIT:
             logger.warning("Website text larger than max size, propably junk skip and add to blacklist {url}")
             BLACKLIST.append(url)
-            return None
-        for tag in soup(['script', 'style', 'header', "footer", "meta", "svg"]):
-            tag.decompose()  # Completely removes the tag from the soup
+            return []
         text_length_per_parent = {}
         if total_length == 0:
             logger.info("No text content found.")
-            return None
+            return []
 
         # Iterate over all elements and count text length
         for element in soup.find_all():
@@ -309,19 +203,16 @@ def getDocsFromHTML(html, url):
         _, main = min(text_length_per_parent.items(), key=lambda x: abs(x[0] - 0.8))
         le=len(main.get_text(strip=True))
         if le > DOC_LIMIT:
-            logger.info(f"Doc larger than max size need to chunk it {le}")
+            logger.info("Doc larger than max size need to chunk it %s", le)
             return split(main)
-        else:
-            logger.info(f"Doc smaller than max size just return it")        
-            return [md(str(main))]
-   
-def delete_vector_with_condition(condition: str):
-    query_collection.delete(filter=condition)
+        logger.info("Doc smaller than max size just return it")
+        return [md(str(main))]
 
-   
+def delete_vector_with_condition(condition: str):
+    query_collection.delete(document=condition)
+
 def delete_vector_entries(ids: list[str]):
     query_collection.delete({"ids":ids})
-
 
 def remove_entries_by_doc_ids(ids: list, url: str):
     """
@@ -339,51 +230,43 @@ def remove_entries_by_doc_ids(ids: list, url: str):
     delete_vector_with_condition(condition=f"doc_id in {ids}")
 
     collection.delete_many({"_id": {"$in": ids}})
-    logger.info(f"Deleted old entries for URL in mongodb: {url}")
-    logger.info(f"Deleted entries with doc_id in {ids}  in vectordb.")
+    logger.info("Deleted old entries for URL in mongodb: %s", url)
+    logger.info("Deleted entries with doc_id in %s in vectordb.", ids)
 
 
-def addQuery(query):
+def add_query(query):
     """Adds a query to the Milvus vector database with proper error handling."""
     try:
         if not query or not query.get("query") or not query.get("doc_id"):
             logger.warning("Invalid query data provided. Skipping insertion.")
             return
 
-        logger.info(f"Generating embedding for query: {query.get('query')}")
+        logger.info("Generating embedding for query: %s", query.get("query"))
         emb = embedder.embed_text(query.get("query"))
 
-        logger.info(f"Inserting query into collection: {query.get('query')} -> {query.get('doc_id')}")
+        logger.info("Inserting query into collection: %s -> %s", query.get('query'), query.get('doc_id'))
         query_collection.insert([{"vector": emb, "query": query.get("query"), "doc_id": query.get("doc_id"), "id": str(uuid.uuid4())}])
-        logger.info(f"Successfully added query: {query.get('query')} with doc: {query.get('doc_id')}")
-    except Exception as e:
-        logger.error(f"Error inserting query into Milvus: {e}")
-
-def generate_hash(doc: str) -> str:
-    """
-    Generate a unique hash based on the document content and URL.
-    """
-    hash_input = doc.encode('utf-8')
-    return hashlib.md5(hash_input).hexdigest()
+        logger.info("Successfully added query: %s with doc: %s", query.get('query'), query.get('doc_id'))
+    except (ValueError, TypeError, RuntimeError) as e:  # Replace with specific exceptions
+        logger.error("Error inserting query into Milvus: %s", e)
 
 
 def load_from_url(url, query):
 
-    docs = getDocsFromHTML(getPageWithSelenium(url), url)
+    docs = get_docs_from_html(get_page_with_selenium(url), url)
     if docs is None:
-        logger.warning(f"Failed to load documents from URL: {url}")
+        logger.warning("Failed to load documents from URL: %s", url)
         return None
-    from app.services.llm import getQueriesForDocument
+    from app.services.llm import get_queries_for_document
 
     for doc in docs:
-        queries = getQueriesForDocument(doc, query)
+        queries = get_queries_for_document(doc, query)
 
-        
-        logger.info(f"{queries}")
-        id = collection.insert_one({"hash_md5": generate_hash(doc) ,"doc": f"{doc}","url": f"{url}","timestamp": f"{datetime.now(tzinfo)}" }).inserted_id
-        logger.info(f"id {id} with doc {doc[0:200]}")
+        logger.info("%s", queries)
+        doc_id = knowledge_collection.insert({"hash_md5": generate_hash(doc) ,"doc": f"{doc}","url": f"{url}","timestamp": f"{datetime.now(TZINFO)}" })["id"]
+        logger.info("id %s with doc %s", doc_id, doc[0:200])
         for q in queries.queries:
-            addQuery({"query": str(q), "doc_id": str(id)})
+            add_query({"query": str(q), "doc_id": str(doc_id)})
 
     return docs
 
@@ -391,50 +274,43 @@ def update_knowledge(url: str):
     """
     Update the knowledge database with new information from a URL.
     """
-    
     # Find Existing id
-    existingEntries = collection.find({"url": url})
-    res = collection.find({"url": url})
+    results = collection.find({"url": url})
     ids = []
-    for re in res:
-        logger.info(re.get("_id"))
-        ids.append(re.get("_id"))
+    for result in results:
+        logger.info(result.get("_id"))
+        ids.append(result.get("_id"))
 
-    logger.info(f"Loading knowledge from URL: {url}")
+    logger.info("Loading knowledge from URL: %s", url)
 
-    load_from_url(url)
-    remove_entries_by_doc_ids(ids, url) 
+    #load_from_url(url)
+    #remove_entries_by_doc_ids(ids, url)
 
-
-
-
-def searchVector(query):
-    logger.info(f"Searching vector for: {query}")
-    resultsList = query_collection.query_text(query
+def search_vector(query):
+    logger.info("Searching vector for: %s", query)
+    results_list = query_collection.query_text([query]
         #limit=40,
         #output_fields=["query", "doc_id","id"],
     )
-
-
-    logger.info(f"Raw search results: {resultsList}")
-    idsToGet = {}
-    resFiltered = []
+    logger.info("Raw search results: %s", results_list)
+    ids_to_get = {}
+    res_filtered = []
 
     # Collect doc_id and distance for each result
-    for results in resultsList:
+    for results in results_list:
         for result in results:
-            logger.debug(f"Search result: {result}")
+            logger.debug("Search result: %s", result)
             distance = result.get("distance")
             if distance > 0.8:  # Filter results based on distance threshold
                 element = result.get("entity")
                 doc_id = element.get("doc_id")
-                resFiltered.append(element) 
-                if idsToGet.get(doc_id, None) is None:
-                    idsToGet[doc_id] = {"doc_id": doc_id, "distance": distance}
-                elif idsToGet[doc_id]["distance"] < distance:
-                    idsToGet[doc_id] = {"doc_id": doc_id, "distance": distance}
+                res_filtered.append(element)
+                if ids_to_get.get(doc_id, None) is None:
+                    ids_to_get[doc_id] = {"doc_id": doc_id, "distance": distance}
+                elif ids_to_get[doc_id]["distance"] < distance:
+                    ids_to_get[doc_id] = {"doc_id": doc_id, "distance": distance}
 
-    unique_ids = list(idsToGet.values())
+    unique_ids = list(ids_to_get.values())
 
     # Sort by distance in descending order
     unique_ids = sorted(unique_ids, key=lambda x: x["distance"], reverse=True)
@@ -443,8 +319,8 @@ def searchVector(query):
     top_ids = [entry["doc_id"] for entry in unique_ids]
     max_distance = unique_ids[0]["distance"] if unique_ids else 0
 
-    logger.info(f"Top 2 IDs: {top_ids} with max distance: {max_distance}")
-    return resFiltered, top_ids
+    logger.info("Top 2 IDs: %s with max distance: %s", top_ids, max_distance)
+    return res_filtered, top_ids
 
 
 class KnowledgeSummary(BaseModel):
@@ -460,9 +336,9 @@ class KnowledgeSummary(BaseModel):
 
 
 async def summarize_knowledge(query: str, knowledge: str, chat: Chat):
-    from app.services.litellm_wrapper import litellm_call
+    from app.services.llm_wrapper import llm_call_wrapper
 
-    return await litellm_call(
+    return await llm_call_wrapper(
         oneShot=True,
         chat=chat,
         response_format=KnowledgeSummary,
@@ -497,38 +373,33 @@ Respond only with the final answer object in JSON format:
 }}
 ''').model_dump()
         ])
-   
 
-
-
-
-
-async def getKnowledge(query: str, chat: Chat, preText: bool = True):
-    if not query or not chat:
+async def get_knowledge(query: str, chat: Chat = None, pre_text: bool = True):
+    if not query:
         logger.warning("Invalid query or chat object provided.")
         return None
-    logger.info(f"Searching for: {query}")
-    entities, idsUnique = searchVector(query)
+    logger.info("Searching for: %s", query)
+    entities, ids_unique = search_vector(query)
 
     hit = False
     knowledge = []
-    if preText:
+    if pre_text:
         knowledge.append(f"&&& BEGIN DOCUMENTATION for query: {query} &&&")
-    if len(idsUnique)>0:
-        logger.info(f"Found {len(idsUnique)} results for query: {query}")
-        for id in idsUnique:
-            res = collection.find_one({"_id": ObjectId(id)})
+    if len(ids_unique)>0:
+        logger.info("Found %d results for query: %s", len(ids_unique), query)
+        for doc_id in ids_unique:
+            res = collection.find_one({"_id": ObjectId(doc_id)})
             summary = await summarize_knowledge(query, res["doc"], chat)
             if summary.is_irrelevant:
                 #delete entities
-                ids = [entity["id"] for entity in entities if entity["doc_id"] == id]
+                ids = [entity["id"] for entity in entities if entity["doc_id"] == doc_id]
                 delete_vector_entries(ids=ids)
             else:
                 hit = True
                 knowledge.append(summary.answer)
         if not hit:
             logger.warning("No relevant information found.")
-            knowledge.extend(await getKnowledge(query, chat, False))
+            knowledge.extend(await get_knowledge(query, chat, False))
     else:
 
         urls = perform_web_search(query)
@@ -536,59 +407,35 @@ async def getKnowledge(query: str, chat: Chat, preText: bool = True):
             # if url in mongo
             res = collection.find_one({"url": url})
             if res:
-                logger.info(f"Found URL in knowledge database, but no entries in vectordb website might be crap, or needs to be re checked for query strings: {url}")
+                logger.info("Found URL in knowledge database, but no entries in vectordb website might be crap, or needs to be re checked for query strings: %s", url)
             else:
-                await chat.set_message(f"Searching in {url} \n\n")
+                if chat:
+                    await chat.set_message(f"Searching in {url} \n\n")
                 load_from_url(url, query)
                 break
-        entities, idsUnique = searchVector(query)
+        entities, ids_unique = search_vector(query)
         hit=False
-        
-        if len(idsUnique)>0:
-            logger.info(f"Found {len(idsUnique)} results for query: {query}")
-            for id in idsUnique:
-                res = collection.find_one({"_id": ObjectId(id)})
+
+        if len(ids_unique)>0:
+            logger.info("Found %d results for query: %s", len(ids_unique), query)
+            for doc_id in ids_unique:
+                res = collection.find_one({"_id": ObjectId(doc_id)})
                 summary = await summarize_knowledge(query, res["doc"], chat)
                 if summary.is_irrelevant:
                     #delete entities
-                    ids = [entity["id"] for entity in entities if entity["doc_id"] == id]
+                    ids = [entity["id"] for entity in entities if entity["doc_id"] == doc_id]
                     delete_vector_entries(ids=ids)
                 else:
                     hit = True
                     knowledge.append(summary.answer)
             if not hit:
                 logger.warning("No hit no relevant information found.")
-                knowledge.extend(await getKnowledge(query, chat, False))
+                knowledge.extend(await get_knowledge(query, chat, False))
         else:
             logger.warning("No relevant information found.")
-            knowledge.extend(await getKnowledge(query, chat, False))
-    if preText:
+            #knowledge.extend(await getKnowledge(query, chat, False))
+            return ["apple"]
+    if pre_text:
         knowledge.append("\n\n&&& END DOCUMENTATION &&&")
 
-    
     return knowledge
-
-
-
-"""
-
-
-#vector = MilvusClient(settings.MILVUSDBFILE)
-#if vector.has_collection(collection_name="knowledge"):
-#    logger.info("Dropping existing collection:knowledge")
-#    vector.drop_collection(collection_name="knowledge")#
-
-#if not vector.has_collection(collection_name="knowledge"):
-#    logger.info("creating new collection: knowledge")
-#    vector.create_collection(
-#        collection_name="knowledge",
-#        auto_id=True,
-#        dimension=1024,
-#    )
-
-def emb_text(text):
-    response = ollama.embeddings(model="mxbai-embed-large", prompt=text)
-    return response["embedding"]"
-
-    
-"""

@@ -2,7 +2,7 @@ import asyncio
 from enum import Enum
 import re
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, EmailStr, Field, PrivateAttr, model_validator, root_validator
+from pydantic import BaseModel, EmailStr, Field, PrivateAttr, model_validator
 
 
 

@@ -1,9 +1,12 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.common.exceptions import TimeoutException
 from selenium_stealth import stealth
 from webdriver_manager.chrome import ChromeDriverManager
 
+from app.config import logger
 
 def create_stealth_driver():
     """
@@ -16,7 +19,7 @@ def create_stealth_driver():
 
     # Browser window and behavior
     chrome_options.add_argument("--start-maximized")
-    
+
     # Uncomment for headless mode if needed (new mode is better for stealth)
     chrome_options.add_argument("--headless=new")
 
@@ -49,7 +52,7 @@ def create_stealth_driver():
 
 
 def get_page_with_selenium(url: str) -> str:
-    """
+    """getPageWithSelenium
     Fetches the HTML content of a page using a stealth-enabled Selenium driver.
 
     Args:
@@ -59,8 +62,25 @@ def get_page_with_selenium(url: str) -> str:
         str: HTML content of the loaded page.
     """
     driver = create_stealth_driver()
+
     try:
         driver.get(url)
-        return driver.page_source
+        WebDriverWait(driver, 3).until(
+            lambda d: d.execute_script(
+                """
+                return window.performance.getEntriesByType('resource')
+                .filter(e => ['xmlhttprequest', 'fetch', 'script', 'css', 'iframe', 'beacon', 'other'].includes(e.initiatorType)).length === 0;
+                """
+            )
+        )
+        page_source = driver.page_source
+        logger.info("Could load page %s, not None", url)
+    except TimeoutException as e:
+        print("Timeout waiting for network requests:", e)
+        page_source = driver.page_source
+        logger.info("Getting page even if not fully loaded %s", url)
+        logger.info("Page source {len(page_source)}")
+        return page_source
     finally:
         driver.quit()
+    return None
