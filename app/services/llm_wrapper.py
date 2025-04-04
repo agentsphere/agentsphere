@@ -1,5 +1,6 @@
 import json
 from textwrap import dedent
+from collections import UserDict
 import litellm
 from pydantic import BaseModel, ValidationError
 from app.models.repo import Repo
@@ -23,6 +24,8 @@ class Check(BaseModel):
 
 async def llm_call_wrapper(retry_count=0, max_retrys=3, **kwargs):
     try:
+        if not kwargs.get("model"):
+            kwargs["model"] = settings.LLM_MODEL
         response = await litellm.acompletion(**kwargs)
         content = response.choices[0].message.content
         if kwargs.get("response_format"):
@@ -49,15 +52,18 @@ async def llm_call_wrapper(retry_count=0, max_retrys=3, **kwargs):
         raise ValueError(f"Invalid response format: {response}") from e
 
 
+class DefaultPlaceholderDict(UserDict):
+    def __missing__(self, key):
+        return f'{{{key}}}'
+
 def update_messages(messages: list[dict[str, any]], callables: dict):
     if callables:
         evaluated_values = {key: func() for key, func in callables.items()}
-            # Replace placeholders in the template using str.format
+        placeholder_dict = DefaultPlaceholderDict(evaluated_values)
         for msg in messages:
             template = msg.get("content", "")
-            msg["content"] = template.format(**evaluated_values)
+            msg["content"] = template.format_map(placeholder_dict)
         logger.info("LLM Call with updated messages: %s", messages)
-
 
 async def execute_tools(commands: list[str], messages: list[dict[str, any]], chat: Chat):
     for command in commands:
@@ -147,9 +153,7 @@ async def llm_tool_call(
                 await chat.set_message(f"🔧 `updating files`\n\n{filenames}")
             repo.update_files(parsed_resp.repo_update)
         messages.append(
-            Message(role=Roles.USER, content=dedent(f"""
-                Given the provided Information by the assistant please give a final answer with message and work_result and set done to True. 
-                Request {request}""")).model_dump()
+            Message(role=Roles.USER, content=dedent("Given the provided Information by the assistant continue your work process")).model_dump()
         )
         # Check if the task is done
         if parsed_resp.done:

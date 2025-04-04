@@ -1,8 +1,8 @@
 import os
 import uuid
 import shutil
-from git import Repo as GitRepo, GitCommandError
 from pathlib import Path
+from git import Repo as GitRepo, GitCommandError
 from app.config import logger
 
 
@@ -10,7 +10,7 @@ class Repo:
     name: str
     uuid: str
     local_path: Path
-    def __init__(self, name: str = "", url:str =""):
+    def __init__(self, name: str = "", url: str = ""):
         """
         Initialize the Repo object.
         If a URL is provided, clone the repository from that URL.
@@ -18,14 +18,14 @@ class Repo:
         """
         if name is None and url is None:
             raise ValueError("Either name or URL must be provided.")
-        
+
         self.uuid = str(uuid.uuid4())
-        
+
         if name is not None:
-            logger.info(f"Creating a new repository with name: {name}")
+            logger.info("Creating a new repository with name: %s", name)
             self.name = name
             self.local_path = Path(f"./repos/{self.uuid}/{name}")  # Create a unique local folder
-        
+
             # Create a new repository locally
             self.local_path.mkdir(parents=True, exist_ok=True)
             self.repo = GitRepo.init(self.local_path)
@@ -33,15 +33,15 @@ class Repo:
             self.repo.index.add([".gitignore"])
             self.repo.index.commit("Initial commit")
         else:
-            logger.info(f"Cloning repository from URL: {url}")
+            logger.info("Cloning repository from URL: %s", url)
             # Clone the repository from the URL
             self.local_path = Path(f"./repos/{self.uuid}/")  # Create a unique local folder
 
             # Create a new repository locally
             self.local_path.mkdir(parents=True, exist_ok=True)
-            
+
             self.repo = GitRepo.clone_from(url, self.local_path)
-        
+
 
     def load_files(self) -> dict:
         """
@@ -58,7 +58,7 @@ class Repo:
                 if full_path.is_file():
                     files_dict[file_path] = full_path.read_text(encoding="utf-8")
         except GitCommandError as e:
-            raise RuntimeError(f"Error loading files: {e}")
+            raise RuntimeError("Error loading files: %s" % e)
         return files_dict
 
     def update_files(self, files_dict: dict):
@@ -118,7 +118,7 @@ class Repo:
                 diff = self.repo.git.diff()
             return diff
         except GitCommandError as e:
-            raise RuntimeError(f"Error getting git diff: {e}")
+            raise RuntimeError(f"Error getting git diff: {e}") from e
 
     def create_zip(self, output_path: str = None) -> str:
         """
@@ -133,9 +133,9 @@ class Repo:
         """
         if output_path is None:
             output_path = str(self.local_path) + ".zip"
-        
+
         try:
             shutil.make_archive(str(self.local_path), 'zip', str(self.local_path))
             return output_path
         except Exception as e:
-            raise RuntimeError(f"Error creating ZIP file: {e}")
+            raise RuntimeError(f"Error creating ZIP file: {e}") from e

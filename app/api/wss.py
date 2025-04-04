@@ -7,5 +7,5 @@ router = APIRouter()
 @router.websocket("/api/v1/wss")
 async def receiver_handler(websocket: WebSocket, token: str = Query(...)):
     """Handles WebSocket connections from Receivers."""
-    logger.debug(f"Receiver connected with token {token}")
+    logger.debug("Receiver connected with token %s", token)
     return await add_connection(websocket, token)

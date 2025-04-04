@@ -10,12 +10,12 @@ class OllamaEmbedder(TextEmbedderInterface):
 
     def embed_text(self, text: str) -> list[float]:
         """Generate an embedding vector using Ollama."""
-        logger.debug(f"Generating embedding for text using Ollama: {text[:100]}...")
+        logger.debug("Generating embedding for text using Ollama: %s...", text[:100])
         try:
             response = ollama.embeddings(model=self.model, prompt=text)
             embedding_vector = response["embedding"]
             logger.info("Successfully generated embedding using Ollama")
             return embedding_vector
         except Exception as e:
-            logger.error(f"Error generating embedding with Ollama: {e}")
+            logger.error("Error generating embedding with Ollama: %s", e)
             raise

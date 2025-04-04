@@ -1,7 +1,6 @@
 import asyncio
 
-
-from fastapi import Depends
+import json
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -9,15 +8,10 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.config import TZINFO, logger
-import json
-
 from app.models.models import Message, User, Chat
 from app.services.auth import get_user, validate_token
 from app.services.helpers import generate_hash
-from pydantic import BaseModel
 from app.services.llm import process_request
-
-
 
 class ChatRequest(BaseModel):
     model: str
@@ -48,7 +42,7 @@ router = APIRouter()
 @router.get("/api/tags", response_model=Dict[str, List[Model]])
 def list_models(token: str = Depends(validate_token)):
     return {
-        "models": [
+        "models":[
             {
                 "name": "superman:latest",
                 "model": "superman:latest",
@@ -72,15 +66,15 @@ def get_version(token: str = Depends(validate_token)):
     return {"version": "0.5.7"}
 
 
-def getResponseObject(message: str, finish: bool = False):
+def get_response_object(message: str, finish: bool = False):
     return json.dumps({
         "model": "superman",
         "created_at": f"{datetime.now(TZINFO)}",
         "message": {
             "role": "assistant",
-            "content": f""
+            "content": message
         },
-        "done": True,
+        "done": finish,
         "total_duration": 2,
         "load_duration": 2,
         "prompt_eval_count": 2,
@@ -132,16 +126,16 @@ async def handle_models(request: ChatRequest, user: User = Depends(get_user)):
     """
     Handles chat requests and streams responses to OpenWebUI.
     """
-    logger.info(f"Incoming request: {request}")
+    logger.info("Incoming request: %s", request)
 
-    id = generate_hash(user.id + request.messages[0].content)
+    chat_id = generate_hash(user.id + request.messages[0].content)
     chat = None
     if len(request.messages) == 1:
-        chat = Chat(id=id, user=user)
-        chats[id] = chat
+        chat = Chat(id=chat_id, user=user)
+        chats[chat_id] = chat
     else:
-        chat = chats[id]
-    logger.info(f"Incoming chat: {chat.user.id}")
+        chat = chats[chat_id]
+    logger.info("Incoming chat: %s", chat.user.id)
 
     if request.stream:
         # Generate a unique chat ID
@@ -154,19 +148,17 @@ async def handle_models(request: ChatRequest, user: User = Depends(get_user)):
 
                 while True:
                     # Wait for the next message from the queue
-                    msg = await chat.getQueueMsg()
+                    msg = await chat.get_queue_msg()
                     if msg == "[DONE]":
-                        logger.info(f"Streaming completed for chat_id: {chat.id}")
-                        yield getResponseObject("", finish=True) + "\n"
+                        logger.info("Streaming completed for chat_id: %s", chat.id)
+                        yield get_response_object("", finish=True) + "\n"
                         break
                     yield stream_response(msg) + "\n"
             finally:
-                logger.info(f"Cleaning up queue for chat_id: {chat.id}")
+                logger.info("Cleaning up queue for chat_id: %s", chat.id)
 
         # Return the streaming response
         return StreamingResponse(event_stream(), media_type="application/json")
     else:
         logger.info("Not streaming")
-        return getResponseObject("Only streaming requests are supported at this time.")
-
-
+        return get_response_object("Only streaming requests are supported at this time.")

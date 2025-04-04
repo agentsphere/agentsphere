@@ -10,11 +10,11 @@ class VertexAIEmbedder(TextEmbedderInterface):
         self.client = genai.Client()
         self.model = settings.EMBEDDING_MODEL
         self.dimensionality = settings.EMBEDDING_DIMENSIONALITY
-        logger.debug(f"Using model: {self.model}")
+        logger.debug("Using model: %s", self.model)
 
     def embed_text(self, text: str) -> list[float]:
         """Generate an embedding vector using Vertex AI."""
-        logger.debug(f"Generating embedding for text using Vertex AI: {text[:100]}...")
+        logger.debug("Generating embedding for text using Vertex AI: %s...", text[:100])
         try:
             response = self.client.models.embed_content(
                 model="text-embedding-005",
@@ -28,5 +28,5 @@ class VertexAIEmbedder(TextEmbedderInterface):
             logger.info("Successfully generated embedding using Vertex AI")
             return embedding_vector
         except Exception as e:
-            logger.error(f"Error generating embedding with Vertex AI: {e}")
+            logger.error("Error generating embedding with Vertex AI: %s", e)
             raise

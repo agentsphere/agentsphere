@@ -1,4 +1,3 @@
-
 from google.cloud import firestore
 from google.oauth2 import service_account
 
@@ -28,80 +27,80 @@ class FirestoreDB(ObjectStoreInterface):
 
     def find_one(self, query: dict, collection: str = None) -> dict:
         """Find a single document in the Firestore collection."""
-        logger.debug(f"Finding one document in collection '{collection}' with query: {query}")
+        logger.debug("Finding one document in collection '%s' with query: %s", collection, query)
         collection = collection or self.collection
         try:
             docs = self.db.collection(collection).where(
                 list(query.keys())[0], "==", list(query.values())[0]
             ).limit(1).stream()
             for doc in docs:
-                logger.info(f"Document found in collection '{collection}': {doc.id}")
+                logger.info("Document found in collection '%s': %s", collection, doc.id)
                 return {"id": doc.id, **doc.to_dict()}
-            logger.info(f"No document found in collection '{collection}' with query: {query}")
+            logger.info("No document found in collection '%s' with query: %s", collection, query)
             return None
         except Exception as e:
-            logger.error(f"Error finding document in collection '{collection}': {e}")
+            logger.error("Error finding document in collection '%s': %s", collection, e)
             raise
 
     def find(self, query: dict, collection: str = None) -> list[dict]:
         """Find multiple documents in the Firestore collection."""
-        logger.debug(f"Finding documents in collection '{collection}' with query: {query}")
+        logger.debug("Finding documents in collection '%s' with query: %s", collection, query)
         collection = collection or self.collection
         try:
             docs = self.db.collection(collection).where(
                 list(query.keys())[0], "==", list(query.values())[0]
             ).stream()
             results = [{"id": doc.id, **doc.to_dict()} for doc in docs]
-            logger.info(f"Found {len(results)} documents in collection '{collection}'")
+            logger.info("Found %d documents in collection '%s'", len(results), collection)
             return results
         except Exception as e:
-            logger.error(f"Error finding documents in collection '{collection}': {e}")
+            logger.error("Error finding documents in collection '%s': %s", collection, e)
             raise
 
     def insert(self, document: dict, collection: str = None) -> dict:
         """Insert a single document into the Firestore collection."""
-        logger.debug(f"Inserting document into collection '{collection}': {document}")
+        logger.debug("Inserting document into collection '%s': %s", collection, document)
         collection = collection or self.collection
         try:
             doc_ref = self.db.collection(collection).add(document)
-            logger.info(f"Document inserted into collection '{collection}': {doc_ref}")
-            logger.info(f"Document inserted into collection '{collection}' with ID: {doc_ref[1].id}")
+            logger.info("Document inserted into collection '%s': %s", collection, doc_ref)
+            logger.info("Document inserted into collection '%s' with ID: %s", collection, doc_ref[1].id)
             return {"success": True, "id": doc_ref[1].id}
         except Exception as e:
-            logger.error(f"Error inserting document into collection '{collection}': {e}")
+            logger.error("Error inserting document into collection '%s': %s", collection, e)
             raise
 
     def insert_many(self, documents: list[dict], collection: str = None) -> list[dict]:
         """Insert multiple documents into the Firestore collection."""
-        logger.debug(f"Inserting multiple documents into collection '{collection}': {documents}")
+        logger.debug("Inserting multiple documents into collection '%s': %s", collection, documents)
         collection = collection or self.collection
         inserted_ids = []
         try:
             for document in documents:
                 doc_ref = self.db.collection(collection).add(document)
                 inserted_ids.append(doc_ref[1].id)
-            logger.info(f"Inserted {len(inserted_ids)} documents into collection '{collection}'")
+            logger.info("Inserted %d documents into collection '%s'", len(inserted_ids), collection)
             return {"success": True, "inserted_ids": inserted_ids}
         except Exception as e:
-            logger.error(f"Error inserting multiple documents into collection '{collection}': {e}")
+            logger.error("Error inserting multiple documents into collection '%s': %s", collection, e)
             raise
 
     def delete(self, document: dict, collection: str = None) -> dict:
         """Delete a single document from the Firestore collection."""
-        logger.debug(f"Deleting document from collection '{collection}' with ID: {document['id']}")
+        logger.debug("Deleting document from collection '%s' with ID: %s", collection, document['id'])
         collection = collection or self.collection
         try:
             doc_ref = self.db.collection(collection).document(document["id"])
             doc_ref.delete()
-            logger.info(f"Document with ID '{document['id']}' deleted from collection '{collection}'")
+            logger.info("Document with ID '%s' deleted from collection '%s'", document['id'], collection)
             return {"success": True, "deleted_count": 1, "document_id": document["id"]}
         except Exception as e:
-            logger.error(f"Error deleting document from collection '{collection}': {e}")
+            logger.error("Error deleting document from collection '%s': %s", collection, e)
             raise
 
     def delete_many(self, documents: list[dict], collection: str = None) -> dict:
         """Delete multiple documents from the Firestore collection."""
-        logger.debug(f"Deleting multiple documents from collection '{collection}': {documents}")
+        logger.debug("Deleting multiple documents from collection '%s': %s", collection, documents)
         collection = collection or self.collection
         deleted_ids = []
         try:
@@ -109,10 +108,10 @@ class FirestoreDB(ObjectStoreInterface):
                 doc_ref = self.db.collection(collection).document(doc["id"])
                 doc_ref.delete()
                 deleted_ids.append(doc["id"])
-            logger.info(f"Deleted {len(deleted_ids)} documents from collection '{collection}'")
+            logger.info("Deleted %d documents from collection '%s'", len(deleted_ids), collection)
             return {"success": True, "deleted_count": len(deleted_ids), "deleted_ids": deleted_ids}
         except Exception as e:
-            logger.error(f"Error deleting multiple documents from collection '{collection}': {e}")
+            logger.error("Error deleting multiple documents from collection '%s': %s", collection, e)
             raise
 
 
@@ -145,3 +144,4 @@ class FireStoreCollection:
     def delete_many(self, documents: list[dict]) -> dict:
         """Delete multiple documents from the specified Firestore collection."""
         return self.db.delete_many(documents, collection=self.collection)
+

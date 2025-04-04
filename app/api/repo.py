@@ -1,9 +1,7 @@
 from pathlib import Path
 import shutil
-import tempfile
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from app.models.repo import Repo
 
 from app.config import logger, settings
 
@@ -17,7 +15,7 @@ async def download_repository(uuid: str, reponame: str):
     # Validate repository path
     if not repo_path.exists() or not repo_path.is_dir():
         raise HTTPException(status_code=404, detail="Repository not found.")
-    
+
     # Define the path for the ZIP file in the same directory as the repository
     zip_path = repo_path.parent / f"{reponame}.zip"
 
@@ -36,5 +34,5 @@ async def download_repository(uuid: str, reponame: str):
             media_type="application/zip"
         )
     except Exception as e:
-        logger.error(f"Error creating ZIP file: {e}")
-        raise HTTPException(status_code=500, detail="Failed to create ZIP file.")
+        logger.error("Error creating ZIP file: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to create ZIP file.") from e

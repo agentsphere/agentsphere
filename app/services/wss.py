@@ -1,9 +1,10 @@
 import asyncio
+import json
 import os
 
 from fastapi import Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
-from app.models.models import Chat, ExecutionRequest
+from app.models.models import Chat
 from app.services.auth import check_executioner, check_executioner_uuid_for_user, get_uuid
 
 from app.config import logger
@@ -47,7 +48,7 @@ async def execute_shell(chat: Chat, command: str):
         ws = connected_receivers.get(chat.user.id)
         if ws is None or not isinstance(ws, WebSocket):
             logger.warning("No valid WebSocket found for uuid %s", chat.user.id)
-            return JSONResponse(status_code=404, content={"error": "No receiver found for the provided token"})
+            return json.dumps({"status_code":404, "content":{"error": "No receiver found for the provided token. No Command execution possible. Do not try again"}})
 
         await ws.send_text("COMMAND")
         cmd = command
@@ -61,14 +62,14 @@ async def execute_shell(chat: Chat, command: str):
                 return response
             except (WebSocketDisconnect, RuntimeError) as recv_error:
                 logger.error("Error receiving response from client: %s", recv_error)
-                return JSONResponse(status_code=500, content={"error": "No acknowledgment from client"})
+                return json.dumps({"status_code":500, "content":{"error": "No acknowledgment from client"}})
         else:
             pass  # Add appropriate handling here if needed
     except (OSError, ValueError) as e:
         logger.error("Error executing shell command: %s", e)
         return f"Error executing command: {e}"
 
-async def send_execution_file(request_raw: ExecutionRequest):
+async def send_execution_file(request_raw):
     """
     Sends an executable file to the receiver with parameters.
     """

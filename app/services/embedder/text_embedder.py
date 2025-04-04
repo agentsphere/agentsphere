@@ -13,4 +13,3 @@ class TextEmbedderInterface(ABC):
         Returns:
             List[float]: The embedding vector.
         """
-        pass
