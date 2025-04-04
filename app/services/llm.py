@@ -375,11 +375,11 @@ async def get_clarification_questions(chat: Chat):
     )
     logger.debug("response: %s", response)
     open_questions = "\n".join(
-        [f"{q.number}: {q.question}" for q in response]
+        [f"{q.number}: {q.question}" for q in response.questions]
     )
 
     await chat.set_message(open_questions)
-    return response
+    return response.questions
 
 
 async def gather_first_infos(chat: Chat):

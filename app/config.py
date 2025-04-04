@@ -107,9 +107,10 @@ class Settings(BaseSettings):
     COLLECTION_NAME_REPOS: str = "repos"
     COLLECTION_NAME_WEB_SEARCH_CACHE: str = "googleSearchCache"
     COLLECTION_NAME_GET_KNOWLEDGE_CACHE: str = "getKnowledgeCache"
-    EMBEDDER: str = "ollama"  # vertex_ai, ollama
+    EMBEDDER: str = "vertex_ai"  # vertex_ai, ollama
     EMBEDDING_MODEL: str = "mxbai-embed-large"
-    EMBEDDING_DIMENSIONALITY: int = 1024
+    VERTEX_EMBEDDING_MODEL: str = "text-embedding-005"  # Model for Vertex AI
+    EMBEDDING_DIMENSIONALITY: int = 768
     VECTOR_DB: str = "firestore"  # milvus_local, firestore
     DOC_LIMIT: int = 20000
     PAGE_LIMIT: int = 200000
@@ -117,6 +118,9 @@ class Settings(BaseSettings):
     BLACKLIST_SEARCH: list[str] = []
     GCLOUD_PROJECT_ID: str = "psyched-option-454007-u6"
     AUTH_SECRET: str = "notSecret"
+    GOOGLE_CLOUD_PROJECT: str = "psyched-option-454007-u6"
+    GOOGLE_CLOUD_LOCATION: str = "europe-west3"
+    GOOGLE_GENAI_USE_VERTEXAI: bool = True
 
     # Use ConfigDict instead of class-based Config
     model_config = ConfigDict(env_file=".env")

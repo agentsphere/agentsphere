@@ -20,7 +20,7 @@ Attributes:
 from fastapi import FastAPI, Request
 from dotenv import load_dotenv
 from app.api import routers
-from app.config import settings, logger
+from app.config import settings, logger, query_collection, knowledge_collection
 
 
 load_dotenv()
@@ -62,4 +62,12 @@ def read_root():
     Returns:
         dict: A dictionary containing a message with a key "message".
     """
+
+    results_list = query_collection.query_text(["asyncio.gather for AI agent parallelism"]
+        #limit=40,
+        #output_fields=["query", "doc_id","id"],
+    )
+    res_doc= knowledge_collection.find_one({"hash_md5": "decf8714af725b88741b32f101bbfc46"})
+    logger.info("Document found in collection: %s", res_doc["doc"])
+    logger.info("Raw search results: %s", results_list)
     return {"message": "message"}

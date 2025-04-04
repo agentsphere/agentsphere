@@ -57,18 +57,30 @@ class FirestoreVectorDB(VectorDBInterface):
         try:
             results = []
             for v in queries:
+                logger.info("Querying Firestore with text: %s", v)
 
-                vector_query = self.collection.find_nearest(
-                    vector_field="vector",
+
+
+                docs = self.collection.find_nearest(
+                    vector_field="embedding_field",
                     query_vector=Vector(embedder.embed_text(v)),
-                    distance_measure=DistanceMeasure.EUCLIDEAN,
+                    distance_measure=DistanceMeasure.DOT_PRODUCT,
+                    distance_result_field="vector_distance",
                     limit=10,
                 ).stream()
-                re= []
-                for doc in vector_query:
-                    re.append({"id": doc.id, **doc.to_dict()})
-                
-                results.append(re)
+                #vector_query_list = list(vector_query)
+                #logger.info("Query returned %d results", len(vector_query_list))
+                #docs = vector_query.stream()
+                docres= []
+                for doc in docs:
+                    if doc.exists:
+                        di = doc.to_dict()
+                        query= di.get("query")
+                        doc_id = di.get("doc_id")
+                        query_id= di.get("id")
+                        docres.append({"distance": doc.get('vector_distance'),"entity": {"query": query, "doc_id": doc_id, "id": query_id}})
+                        logger.info(f"{doc.id}, Distance: {doc.get('vector_distance')}")
+                results.append(docres)
             return results
         except Exception as e:
             logger.error("Error querying Firestore: %s", e)

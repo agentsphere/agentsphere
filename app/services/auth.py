@@ -26,7 +26,7 @@ def introspect_token(token: str) -> dict:
     client_secret = settings.CLIENT_SECRET
 
     response = requests.post(
-        timeout=10,
+        timeout=30,
         url = INTROSPECTION_URL,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         data={"token": ctoken, "client_id": client_id, "client_secret": client_secret}

@@ -1,14 +1,19 @@
 from google import genai
 from google.genai.types import EmbedContentConfig
+from google.oauth2 import service_account
+
 from app.services.embedder.text_embedder import TextEmbedderInterface
 from app.config import logger, settings
 
 class VertexAIEmbedder(TextEmbedderInterface):
     def __init__(self):
         """Initialize the Vertex AI client."""
+        scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+
+        creds = service_account.Credentials.from_service_account_file(settings.GOOGLE_APPLICATION_CREDENTIALS,scopes=scopes)
         logger.info("Initializing Vertex AI Embedder")
-        self.client = genai.Client()
-        self.model = settings.EMBEDDING_MODEL
+        self.client = genai.Client(vertexai=True,location=settings.GOOGLE_CLOUD_LOCATION,project=settings.GCLOUD_PROJECT_ID,credentials=creds)
+        self.model = settings.VERTEX_EMBEDDING_MODEL
         self.dimensionality = settings.EMBEDDING_DIMENSIONALITY
         logger.debug("Using model: %s", self.model)
 

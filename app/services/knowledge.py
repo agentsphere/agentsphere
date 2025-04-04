@@ -263,7 +263,8 @@ def load_from_url(url, query):
         queries = get_queries_for_document(doc, query)
 
         logger.info("%s", queries)
-        doc_id = knowledge_collection.insert({"hash_md5": generate_hash(doc) ,"doc": f"{doc}","url": f"{url}","timestamp": f"{datetime.now(TZINFO)}" })["id"]
+        doc_id=uuid.uuid4()
+        c= knowledge_collection.insert({"doc_id": str(doc_id),"hash_md5": generate_hash(doc) ,"doc": f"{doc}","url": f"{url}","timestamp": f"{datetime.now(TZINFO)}" }) 
         logger.info("id %s with doc %s", doc_id, doc[0:200])
         for q in queries.queries:
             add_query({"query": str(q), "doc_id": str(doc_id)})
@@ -386,21 +387,30 @@ async def get_knowledge(query: str, chat: Chat = None, pre_text: bool = True):
     if pre_text:
         knowledge.append(f"&&& BEGIN DOCUMENTATION for query: {query} &&&")
     if len(ids_unique)>0:
+        logger.info("First search in vectordb hit")
         logger.info("Found %d results for query: %s", len(ids_unique), query)
         for doc_id in ids_unique:
+            ids_current = [entity["id"] for entity in entities if entity["doc_id"] == doc_id]
             res = collection.find_one({"_id": ObjectId(doc_id)})
-            summary = await summarize_knowledge(query, res["doc"], chat)
-            if summary.is_irrelevant:
-                #delete entities
-                ids = [entity["id"] for entity in entities if entity["doc_id"] == doc_id]
-                delete_vector_entries(ids=ids)
+            if res:
+                summary = await summarize_knowledge(query, res["doc"], chat)
+                logger.info("Summary: %s", summary)
+                if summary.is_irrelevant:
+                    #delete entities
+                    delete_vector_entries(ids=ids_current)
+                else:
+                    hit = True
+                    knowledge.append(summary.answer)
             else:
-                hit = True
-                knowledge.append(summary.answer)
+                logger.warning("No result found for doc_id: %s", doc_id)
+                logger.info("Delete the vector entry with doc_id %s", doc_id)
+                delete_vector_entries(ids=ids_current)
         if not hit:
             logger.warning("No relevant information found.")
             knowledge.extend(await get_knowledge(query, chat, False))
     else:
+
+        logger.info("First search in vectordb no hit")
 
         urls = perform_web_search(query)
         for url in urls:
@@ -417,24 +427,30 @@ async def get_knowledge(query: str, chat: Chat = None, pre_text: bool = True):
         hit=False
 
         if len(ids_unique)>0:
+            logger.info("Second search in vectordb hit")
             logger.info("Found %d results for query: %s", len(ids_unique), query)
             for doc_id in ids_unique:
-                res = collection.find_one({"_id": ObjectId(doc_id)})
-                summary = await summarize_knowledge(query, res["doc"], chat)
-                if summary.is_irrelevant:
-                    #delete entities
-                    ids = [entity["id"] for entity in entities if entity["doc_id"] == doc_id]
-                    delete_vector_entries(ids=ids)
+                ids_current = [entity["id"] for entity in entities if entity["doc_id"] == doc_id]
+                res = collection.find_one({"doc_id": doc_id})
+                if res:
+                    summary = await summarize_knowledge(query, res["doc"], chat)
+                    if summary.is_irrelevant:
+                        #delete entities
+                        delete_vector_entries(ids=ids_current)
+                    else:
+                        hit = True
+                        knowledge.append(summary.answer)
                 else:
-                    hit = True
-                    knowledge.append(summary.answer)
+                    logger.warning("No result found for doc_id: %s", doc_id)
+                    logger.info("Delete the vector entry with doc_id %s", doc_id)
+                    delete_vector_entries(ids=ids_current)
             if not hit:
                 logger.warning("No hit no relevant information found.")
                 knowledge.extend(await get_knowledge(query, chat, False))
         else:
             logger.warning("No relevant information found.")
-            #knowledge.extend(await getKnowledge(query, chat, False))
-            return ["apple"]
+            knowledge.extend(await get_knowledge(query, chat, False))
+            #return ["apple"]
     if pre_text:
         knowledge.append("\n\n&&& END DOCUMENTATION &&&")
 

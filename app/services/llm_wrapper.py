@@ -1,4 +1,5 @@
 import json
+import re
 from textwrap import dedent
 from collections import UserDict
 import litellm
@@ -31,6 +32,20 @@ async def llm_call_wrapper(retry_count=0, max_retrys=3, **kwargs):
         if kwargs.get("response_format"):
             return kwargs.get("response_format").model_validate(json.loads(content))
         return content
+    except ValueError as e:
+        logger.error("Error json decoder error response not valid json: %s", e)
+        if retry_count > max_retrys:
+            logger.error("Max retries reached. Returning None or raising.")
+            raise e  # or return None
+        messages = []
+        messages.append(
+                Message(role=Roles.ASSISTANT, content=f"The output json is not correct. Got validation error in output {str(e)}").model_dump()
+            )
+        messages.append(
+                Message(role=Roles.USER, content=f"fix the following output to meet the requested output format: {content}").model_dump()
+            )
+        kwargs["messages"] = messages
+        return await llm_call_wrapper(retry_count=retry_count + 1, **kwargs)
     except ValidationError as e:
         logger.error("Error parsing LLM response: %s", e)
         if retry_count > max_retrys:
@@ -45,7 +60,7 @@ async def llm_call_wrapper(retry_count=0, max_retrys=3, **kwargs):
             )
         kwargs["messages"] = messages
         return await llm_call_wrapper(retry_count=retry_count + 1, **kwargs)
-    except (KeyError, TypeError, ValueError) as e:  # Replace with specific exceptions
+    except (KeyError, TypeError) as e:  # Replace with specific exceptions
         logger.error("Error parsing LLM response expecting (response.choices[0].message.content): error %s", e)
         logger.error("Error parsing LLM response: %s", response)
         logger.error("Error parsing LLM response, won't retry")
@@ -55,15 +70,29 @@ async def llm_call_wrapper(retry_count=0, max_retrys=3, **kwargs):
 class DefaultPlaceholderDict(UserDict):
     def __missing__(self, key):
         return f'{{{key}}}'
+    
+# Matches {simple_key} but not {key.with.dot}
+PLACEHOLDER_REGEX = re.compile(r'{(\w+)}')
+
+
+class SafeDict(dict):
+    def __missing__(self, key):
+        return '{' + key + '}'  # leave unknown placeholder as-is
 
 def update_messages(messages: list[dict[str, any]], callables: dict):
     if callables:
         evaluated_values = {key: func() for key, func in callables.items()}
-        placeholder_dict = DefaultPlaceholderDict(evaluated_values)
+        placeholder_dict = SafeDict(evaluated_values)
+
         for msg in messages:
             template = msg.get("content", "")
-            msg["content"] = template.format_map(placeholder_dict)
-        logger.info("LLM Call with updated messages: %s", messages)
+            # Only replace placeholders that match the keys
+            def replacer(match):
+                key = match.group(1)
+                return str(placeholder_dict.get(key, match.group(0)))
+
+            msg["content"] = PLACEHOLDER_REGEX.sub(replacer, template)
+
 
 async def execute_tools(commands: list[str], messages: list[dict[str, any]], chat: Chat):
     for command in commands:
