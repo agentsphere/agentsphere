@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from textwrap import dedent
@@ -46,6 +47,14 @@ async def llm_call_wrapper(retry_count=0, max_retrys=3, **kwargs):
             )
         kwargs["messages"] = messages
         return await llm_call_wrapper(retry_count=retry_count + 1, **kwargs)
+    except litellm.exceptions.BadRequestError as e:
+        logger.error("Error in LLM call, sleep for 5 before retry: %s", e)
+        await asyncio.sleep(5)
+        if retry_count > max_retrys:
+            logger.error("Max retries reached. Returning None or raising.")
+            raise e  # or return None
+        return await llm_call_wrapper(retry_count=retry_count + 1, **kwargs)
+
     except ValidationError as e:
         logger.error("Error parsing LLM response: %s", e)
         if retry_count > max_retrys:
@@ -163,6 +172,10 @@ async def llm_tool_call(
                 if chat:
                     await chat.set_message(f"🔧 `getKnowledge`: {query}  \n\n")
                 message_content = f"{'\n\n'.join(await get_knowledge(chat=chat, query=query))}"
+
+                if chat:
+                    await chat.set_message(f"{message_content}  \n\n")
+
             except (KeyError, ValueError, RuntimeError) as e:  # Replace with specific exceptions
                 message_content = f"❌ Tool `getKnowledge` execution failed for query {query}. Error: {str(e)}"
                 logger.error("Error executing tool 'getKnowledge' with query %s: %s", query, e)

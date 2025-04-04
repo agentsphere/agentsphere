@@ -561,7 +561,7 @@ async def process_request(chat: Chat, messages: list[Message]):
                 chat.clarification_questions = await get_clarification_questions(chat)
 
             if any(q.status == "open" for q in chat.clarification_questions):
-                chat.clarification_questions = merge_questions_with_response(chat.clarification_questions, messages[-1].content)
+                chat.clarification_questions = await merge_questions_with_response(chat.clarification_questions, messages[-1].content)
                 if any(q.status == "open" for q in chat.clarification_questions):
                     open_questions = "\n".join(
                         [f"{q.number}: {q.question}" for q in chat.clarification_questions if q.status == "open"]

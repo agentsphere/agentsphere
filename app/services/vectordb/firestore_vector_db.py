@@ -64,8 +64,9 @@ class FirestoreVectorDB(VectorDBInterface):
                 docs = self.collection.find_nearest(
                     vector_field="embedding_field",
                     query_vector=Vector(embedder.embed_text(v)),
-                    distance_measure=DistanceMeasure.DOT_PRODUCT,
+                    distance_measure=DistanceMeasure.COSINE,
                     distance_result_field="vector_distance",
+                    distance_threshold=1-0.84,
                     limit=10,
                 ).stream()
                 #vector_query_list = list(vector_query)
@@ -78,7 +79,7 @@ class FirestoreVectorDB(VectorDBInterface):
                         query= di.get("query")
                         doc_id = di.get("doc_id")
                         query_id= di.get("id")
-                        docres.append({"distance": doc.get('vector_distance'),"entity": {"query": query, "doc_id": doc_id, "id": query_id}})
+                        docres.append({"distance": 1-doc.get('vector_distance'),"entity": {"query": query, "doc_id": doc_id, "id": query_id}})
                         logger.info(f"{doc.id}, Distance: {doc.get('vector_distance')}")
                 results.append(docres)
             return results

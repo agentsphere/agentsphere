@@ -21,7 +21,7 @@ from fastapi import FastAPI, Request
 from dotenv import load_dotenv
 from app.api import routers
 from app.config import settings, logger, query_collection, knowledge_collection
-
+from app.services.knowledge import get_knowledge
 
 load_dotenv()
 
@@ -55,7 +55,7 @@ logger.info("API routes included")
 
 
 @app.get("/")
-def read_root():
+async def read_root():
     """
     Handles the root endpoint of the application.
 
@@ -63,11 +63,13 @@ def read_root():
         dict: A dictionary containing a message with a key "message".
     """
 
-    results_list = query_collection.query_text(["asyncio.gather for AI agent parallelism"]
+    #results_list = query_collection.query_text(["how does crewAI compare to other multi-agent"]
         #limit=40,
         #output_fields=["query", "doc_id","id"],
-    )
-    res_doc= knowledge_collection.find_one({"hash_md5": "decf8714af725b88741b32f101bbfc46"})
-    logger.info("Document found in collection: %s", res_doc["doc"])
-    logger.info("Raw search results: %s", results_list)
+    #)
+    #logger.info("Raw search results: %s", results_list)
+    await get_knowledge("What is crewAI?")
+    #res_doc= knowledge_collection.find_one({"hash_md5": "decf8714af725b88741b32f101bbfc46"})
+    #logger.info("Document found in collection: %s", res_doc["doc"])
+    #logger.info("Raw search results: %s", results_list)
     return {"message": "message"}

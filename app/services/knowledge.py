@@ -296,7 +296,6 @@ def search_vector(query):
     logger.info("Raw search results: %s", results_list)
     ids_to_get = {}
     res_filtered = []
-
     # Collect doc_id and distance for each result
     for results in results_list:
         for result in results:
@@ -340,8 +339,6 @@ async def summarize_knowledge(query: str, knowledge: str, chat: Chat):
     from app.services.llm_wrapper import llm_call_wrapper
 
     return await llm_call_wrapper(
-        oneShot=True,
-        chat=chat,
         response_format=KnowledgeSummary,
         messages=[
     Message(role=Roles.SYSTEM.value, content=(
@@ -389,25 +386,26 @@ async def get_knowledge(query: str, chat: Chat = None, pre_text: bool = True):
     if len(ids_unique)>0:
         logger.info("First search in vectordb hit")
         logger.info("Found %d results for query: %s", len(ids_unique), query)
+        doc_texts = []
         for doc_id in ids_unique:
             ids_current = [entity["id"] for entity in entities if entity["doc_id"] == doc_id]
-            res = collection.find_one({"_id": ObjectId(doc_id)})
+            res = collection.find_one({"doc_id": doc_id})
             if res:
-                summary = await summarize_knowledge(query, res["doc"], chat)
-                logger.info("Summary: %s", summary)
-                if summary.is_irrelevant:
-                    #delete entities
-                    delete_vector_entries(ids=ids_current)
-                else:
-                    hit = True
-                    knowledge.append(summary.answer)
+                doc_texts.append(res["doc"])
             else:
                 logger.warning("No result found for doc_id: %s", doc_id)
                 logger.info("Delete the vector entry with doc_id %s", doc_id)
                 delete_vector_entries(ids=ids_current)
-        if not hit:
-            logger.warning("No relevant information found.")
-            knowledge.extend(await get_knowledge(query, chat, False))
+        if doc_texts:
+            summary = await summarize_knowledge(query, "n ".join(doc_texts), chat)
+            logger.info("Summary: %s", summary)
+            if summary.is_irrelevant:
+                knowledge.append(f"No relevant information found for your query: {query}. please try again with a different query. maybe splitting your original query in multiple yield better results.")
+                logger.warning("No relevant information found.")
+            #    #delete entities
+            #    delete_vector_entries(ids=ids_current)
+            else:
+                knowledge.append(summary.answer)
     else:
 
         logger.info("First search in vectordb no hit")
@@ -433,20 +431,21 @@ async def get_knowledge(query: str, chat: Chat = None, pre_text: bool = True):
                 ids_current = [entity["id"] for entity in entities if entity["doc_id"] == doc_id]
                 res = collection.find_one({"doc_id": doc_id})
                 if res:
-                    summary = await summarize_knowledge(query, res["doc"], chat)
-                    if summary.is_irrelevant:
-                        #delete entities
-                        delete_vector_entries(ids=ids_current)
-                    else:
-                        hit = True
-                        knowledge.append(summary.answer)
+                    doc_texts.append(res["doc"])
                 else:
                     logger.warning("No result found for doc_id: %s", doc_id)
                     logger.info("Delete the vector entry with doc_id %s", doc_id)
                     delete_vector_entries(ids=ids_current)
-            if not hit:
-                logger.warning("No hit no relevant information found.")
-                knowledge.extend(await get_knowledge(query, chat, False))
+            if doc_texts:
+                summary = await summarize_knowledge(query, "n ".join(doc_texts), chat)
+                logger.info("Summary: %s", summary)
+                if summary.is_irrelevant:
+                    knowledge.append(f"No relevant information found for your query: {query}. please try again with a different query. maybe splitting your original query in multiple yield better results.")
+                    logger.warning("No relevant information found.")
+                #    #delete entities
+                #    delete_vector_entries(ids=ids_current)
+                else:
+                    knowledge.append(summary.answer)
         else:
             logger.warning("No relevant information found.")
             knowledge.extend(await get_knowledge(query, chat, False))

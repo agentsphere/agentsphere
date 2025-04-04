@@ -1,3 +1,4 @@
+from time import sleep
 from google import genai
 from google.genai.types import EmbedContentConfig
 from google.oauth2 import service_account
@@ -29,6 +30,7 @@ class VertexAIEmbedder(TextEmbedderInterface):
                     output_dimensionality=self.dimensionality,
                 ),
             )
+            sleep(1)
             embedding_vector = response.embeddings[0].values
             logger.info("Successfully generated embedding using Vertex AI")
             return embedding_vector
